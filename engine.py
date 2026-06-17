@@ -110,6 +110,7 @@ class SemiSubResult:
     mooring_cost_musd: float
     platform_capex_musd: float
     wtg_capex_musd: float
+    foundation_capex_musd: float
     balance_of_plant_musd: float
     installation_capex_musd: float
     total_capex_musd: float
@@ -279,14 +280,15 @@ def _capex_breakdown(inputs: DesignInputs, structural_mass_t: float, ballast_t: 
     wtg = inputs.turbine_mw * USD_PER_MW_WTG / 1_000_000.0
     bop = inputs.turbine_mw * USD_PER_MW_ELECTRICAL / 1_000_000.0
     installation = (USD_INSTALL_BASE * (inputs.turbine_mw / 15.0) ** 0.55 * (inputs.water_depth_m / 200.0) ** 0.18) / 1_000_000.0
-    total = platform + mooring_cost_musd + wtg + bop + installation
+    foundation_total = platform + mooring_cost_musd + bop + installation
     return {
         "platform_capex_musd": platform,
         "wtg_capex_musd": wtg,
+        "foundation_capex_musd": foundation_total,
         "balance_of_plant_musd": bop,
         "installation_capex_musd": installation,
-        "total_capex_musd": total,
-        "capex_per_mw_musd": total / max(inputs.turbine_mw, 1e-6),
+        "total_capex_musd": foundation_total,
+        "capex_per_mw_musd": foundation_total / max(inputs.turbine_mw, 1e-6),
     }
 
 
@@ -408,6 +410,7 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                 mooring_cost_musd=mooring["mooring_cost_musd"],
                 platform_capex_musd=capex["platform_capex_musd"],
                 wtg_capex_musd=capex["wtg_capex_musd"],
+                foundation_capex_musd=capex["foundation_capex_musd"],
                 balance_of_plant_musd=capex["balance_of_plant_musd"],
                 installation_capex_musd=capex["installation_capex_musd"],
                 total_capex_musd=capex["total_capex_musd"],

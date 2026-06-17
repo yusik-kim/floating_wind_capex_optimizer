@@ -13,7 +13,7 @@ from engine import (
 )
 
 
-st.set_page_config(page_title="Floating Wind CAPEX Optimizer v0.4", layout="wide")
+st.set_page_config(page_title="Floating Wind Foundation CAPEX Optimizer v0.5", layout="wide")
 
 
 def money_musd(value: float) -> str:
@@ -31,20 +31,19 @@ def compact_number(value: float, unit: str = "") -> str:
 
 
 def platform_top_svg(result) -> str:
-    width, height = 520, 360
+    width, height = 560, 360
     cx, cy = width / 2, height / 2
-    scale = min(2.25, 165.0 / max(result.column_spacing_m, 1.0))
+    scale = min(2.25, 150.0 / max(result.column_spacing_m, 1.0))
     radius = result.column_spacing_m / math.sqrt(3.0) * scale
-    col_r = max(12.0, result.column_diameter_m * scale / 2.0)
+    col_r = max(8.0, result.column_diameter_m * scale / 2.0)
     points = [
         (cx + radius, cy),
         (cx - 0.5 * radius, cy + math.sqrt(3.0) * radius / 2.0),
         (cx - 0.5 * radius, cy - math.sqrt(3.0) * radius / 2.0),
     ]
-    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
-    lines = "".join(
+    arms = "".join(
         f'<line x1="{points[i][0]:.1f}" y1="{points[i][1]:.1f}" '
-        f'x2="{points[(i + 1) % 3][0]:.1f}" y2="{points[(i + 1) % 3][1]:.1f}" />'
+        f'x2="{cx:.1f}" y2="{cy:.1f}" />'
         for i in range(3)
     )
     cols = "".join(
@@ -54,56 +53,82 @@ def platform_top_svg(result) -> str:
     return f"""
     <svg viewBox="0 0 {width} {height}" role="img" aria-label="Top view platform layout">
       <style>
-        .frame {{ fill:#f8fafc; stroke:#cbd5e1; }}
-        .pontoon {{ stroke:#64748b; stroke-width:18; stroke-linecap:round; fill:none; }}
-        .deck {{ fill:#dbeafe; stroke:#2563eb; stroke-width:2; opacity:0.42; }}
-        .column {{ fill:#0f766e; stroke:#0f172a; stroke-width:2; }}
-        .label {{ font: 15px system-ui, sans-serif; fill:#0f172a; }}
-        .small {{ font: 13px system-ui, sans-serif; fill:#475569; }}
+        .bg {{ fill:#ffffff; }}
+        .arm {{ stroke:#ef4444; stroke-width:15; stroke-linecap:round; filter:url(#shadow); }}
+        .column {{ fill:#fff200; stroke:#d4a900; stroke-width:1.5; }}
+        .center {{ fill:#ffffff; stroke:#ef4444; stroke-width:5; }}
+        .dim {{ stroke:#111827; stroke-width:1; marker-start:url(#arrow); marker-end:url(#arrow); }}
+        .thin {{ stroke:#111827; stroke-width:1; fill:none; }}
+        .label {{ font: 13px system-ui, sans-serif; fill:#111827; }}
+        .small {{ font: 12px system-ui, sans-serif; fill:#334155; }}
       </style>
-      <rect class="frame" x="8" y="8" width="{width-16}" height="{height-16}" rx="8" />
-      <polygon class="deck" points="{poly}" />
-      <g class="pontoon">{lines}</g>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#111827" />
+        </marker>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="4" dy="5" stdDeviation="3" flood-color="#000000" flood-opacity="0.22" />
+        </filter>
+      </defs>
+      <rect class="bg" x="0" y="0" width="{width}" height="{height}" />
+      <g class="arm">{arms}</g>
       <g class="column">{cols}</g>
-      <text class="label" x="24" y="34">Top layout</text>
-      <text class="small" x="24" y="314">Column dia: {result.column_diameter_m:.1f} m</text>
-      <text class="small" x="24" y="336">Spacing: {result.column_spacing_m:.1f} m</text>
+      <circle class="center" cx="{cx:.1f}" cy="{cy:.1f}" r="{max(7.0, col_r * 0.65):.1f}" />
+      <line class="dim" x1="{points[2][0]:.1f}" y1="{points[2][1]-28:.1f}" x2="{points[0][0]:.1f}" y2="{points[0][1]-28:.1f}" />
+      <text class="label" x="{(points[2][0]+points[0][0])/2-20:.1f}" y="{points[0][1]-38:.1f}">{result.column_spacing_m:.1f} m</text>
+      <text class="label" x="{points[2][0]-54:.1f}" y="{points[2][1]-8:.1f}">Dia {result.column_diameter_m:.1f} m</text>
+      <path class="thin" d="M {points[0][0]+18:.1f},{points[0][1]-34:.1f} A 112,112 0 0 1 {points[1][0]+18:.1f},{points[1][1]+26:.1f}" />
+      <text class="label" x="{points[0][0]+52:.1f}" y="{cy+2:.1f}" transform="rotate(86 {points[0][0]+52:.1f},{cy+2:.1f})">120 deg</text>
+      <text class="small" x="20" y="334">Top view: 3-column semi-sub layout</text>
     </svg>
     """
 
 
 def platform_side_svg(result, max_column_diameter_m: float) -> str:
-    width, height = 520, 360
-    water_y = 132
-    keel_y = 300
-    draft_px = 120.0
+    width, height = 560, 360
+    water_y = 206
+    keel_y = 298
+    draft_px = keel_y - water_y
     col_height_px = max(155.0, draft_px * result.column_height_m / max(result.draft_m, 1.0))
     top_y = keel_y - col_height_px
-    col_w = max(34.0, min(88.0, result.column_diameter_m * 4.7))
-    spacing_px = min(310.0, max(170.0, result.column_spacing_m * 3.5))
+    col_w = max(30.0, min(72.0, result.column_diameter_m * 4.0))
+    spacing_px = min(330.0, max(190.0, result.column_spacing_m * 3.0))
     x1, x2 = width / 2 - spacing_px / 2, width / 2 + spacing_px / 2
     ratio = min(1.0, result.column_diameter_m / max(max_column_diameter_m, 1e-6))
-    fill = "#dc2626" if ratio > 1.0 else "#0f766e"
+    fill = "#dc2626" if ratio > 1.0 else "#ef4444"
+    pontoon_h = 22
     return f"""
     <svg viewBox="0 0 {width} {height}" role="img" aria-label="Side view platform layout">
       <style>
-        .frame {{ fill:#f8fafc; stroke:#cbd5e1; }}
-        .water {{ fill:#bfdbfe; opacity:0.62; }}
-        .waterline {{ stroke:#2563eb; stroke-width:2; stroke-dasharray:7 7; }}
-        .column {{ fill:{fill}; stroke:#0f172a; stroke-width:2; }}
-        .pontoon {{ fill:#334155; opacity:0.92; }}
-        .label {{ font: 15px system-ui, sans-serif; fill:#0f172a; }}
-        .small {{ font: 13px system-ui, sans-serif; fill:#475569; }}
+        .bg {{ fill:#ffffff; }}
+        .waterline {{ stroke:#111827; stroke-width:1; }}
+        .column {{ fill:{fill}; stroke:#b91c1c; stroke-width:2; filter:url(#shadow); }}
+        .pontoon {{ fill:{fill}; stroke:#b91c1c; stroke-width:2; filter:url(#shadow); }}
+        .dim {{ stroke:#111827; stroke-width:1; marker-start:url(#arrow); marker-end:url(#arrow); }}
+        .thin {{ stroke:#111827; stroke-width:1; fill:none; }}
+        .label {{ font: 13px system-ui, sans-serif; fill:#111827; }}
+        .small {{ font: 12px system-ui, sans-serif; fill:#334155; }}
       </style>
-      <rect class="frame" x="8" y="8" width="{width-16}" height="{height-16}" rx="8" />
-      <rect class="water" x="9" y="{water_y}" width="{width-18}" height="{height-water_y-9}" />
-      <line class="waterline" x1="18" y1="{water_y}" x2="{width-18}" y2="{water_y}" />
-      <rect class="pontoon" x="{x1-col_w/2:.1f}" y="{keel_y-28}" width="{x2-x1+col_w:.1f}" height="28" rx="4" />
-      <rect class="column" x="{x1-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{col_height_px:.1f}" rx="5" />
-      <rect class="column" x="{x2-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{col_height_px:.1f}" rx="5" />
-      <text class="label" x="24" y="34">Side layout</text>
-      <text class="small" x="24" y="314">Draft: {result.draft_m:.1f} m</text>
-      <text class="small" x="24" y="336">Column height: {result.column_height_m:.1f} m</text>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#111827" />
+        </marker>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="4" dy="5" stdDeviation="3" flood-color="#000000" flood-opacity="0.20" />
+        </filter>
+      </defs>
+      <rect class="bg" x="0" y="0" width="{width}" height="{height}" />
+      <line class="waterline" x1="48" y1="{water_y}" x2="{width-46}" y2="{water_y}" />
+      <rect class="pontoon" x="{x1-col_w/2:.1f}" y="{keel_y-pontoon_h:.1f}" width="{x2-x1+col_w:.1f}" height="{pontoon_h}" rx="3" />
+      <rect class="column" x="{x1-col_w/2:.1f}" y="{water_y-8:.1f}" width="{col_w:.1f}" height="{draft_px+8:.1f}" rx="4" />
+      <rect class="column" x="{x2-col_w/2:.1f}" y="{water_y-8:.1f}" width="{col_w:.1f}" height="{draft_px+8:.1f}" rx="4" />
+      <line class="dim" x1="{x1:.1f}" y1="{keel_y+28:.1f}" x2="{x2:.1f}" y2="{keel_y+28:.1f}" />
+      <text class="label" x="{width/2-28:.1f}" y="{keel_y+45:.1f}">{result.column_spacing_m:.1f} m</text>
+      <line class="dim" x1="{x2+42:.1f}" y1="{water_y:.1f}" x2="{x2+42:.1f}" y2="{keel_y:.1f}" />
+      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+4:.1f}">{result.draft_m:.1f} m draft</text>
+      <line class="dim" x1="{x1-col_w/2:.1f}" y1="{keel_y+10:.1f}" x2="{x1+col_w/2:.1f}" y2="{keel_y+10:.1f}" />
+      <text class="label" x="{x1-col_w/2-2:.1f}" y="{keel_y+24:.1f}">{result.column_diameter_m:.1f} m</text>
+      <text class="small" x="20" y="334">Side view: foundation geometry only</text>
     </svg>
     """
 
@@ -141,17 +166,25 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Floating Wind CAPEX Optimizer v0.4")
-st.caption("A concept-screening optimizer for non-experts: adjust turbine, draft, pitch and offset, then compare against the lowest CAPEX case.")
+st.title("Floating Wind Foundation CAPEX Optimizer v0.5")
+st.caption("A concept-screening optimizer for non-experts: choose turbine size, then optimize foundation CAPEX excluding WTG supply cost.")
 
 with st.sidebar:
-    st.header("Minimize CAPEX")
-    optimize_wtg = st.toggle("Optimize WTG capacity", value=True)
-    if optimize_wtg:
-        turbine_mw = 15.0
-    else:
-        turbine_mw = st.slider("WTG capacity [MW]", 8.0, 20.0, 15.0, 1.0)
+    st.header("Turbine")
+    turbine_mw = st.slider("WTG capacity [MW]", 8.0, 20.0, 15.0, 1.0)
+    turbine_props = turbine_from_capacity(turbine_mw)
+    st.caption(
+        f"Uses table data: rotor {turbine_props['rotor_diameter_m']:.0f} m, "
+        f"mass {turbine_props['mass_t']:.0f} t, thrust {turbine_props['thrust_mn']:.2f} MN."
+    )
 
+    st.header("Site")
+    water_depth_m = st.number_input("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
+    hs_m = st.number_input("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
+    tp_s = st.number_input("Peak period Tp [s]", 4.0, 25.0, 12.0, 0.5)
+    port_draft_limit_m = st.number_input("Port / tow-out draft limit [m]", 5.0, 80.0, 25.0, 1.0)
+
+    st.header("Minimize Foundation CAPEX")
     optimize_draft = st.toggle("Optimize draft", value=True)
     if optimize_draft:
         target_draft_m = 20.0
@@ -166,15 +199,11 @@ with st.sidebar:
 
     optimize_offset = st.toggle("Optimize offset limit", value=True)
     if optimize_offset:
-        allowable_offset_pct_depth = 5.0
+        allowable_offset_m = water_depth_m * 0.05
     else:
-        allowable_offset_pct_depth = st.slider("Offset limit [% water depth]", 3.0, 8.0, 5.0, 0.5)
-
-    st.header("Site")
-    water_depth_m = st.number_input("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
-    hs_m = st.number_input("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
-    tp_s = st.number_input("Peak period Tp [s]", 4.0, 25.0, 12.0, 0.5)
-    port_draft_limit_m = st.number_input("Port / tow-out draft limit [m]", 5.0, 80.0, 25.0, 1.0)
+        max_offset_slider = max(5.0, min(120.0, water_depth_m * 0.12))
+        allowable_offset_m = st.slider("Offset limit [m]", 2.0, max_offset_slider, min(10.0, max_offset_slider), 1.0)
+    allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
 
     st.header("Constraints")
     max_column_diameter_m = st.number_input("Max column diameter [m]", 6.0, 30.0, 12.0, 0.5)
@@ -201,8 +230,8 @@ base_inputs = design_inputs_from_turbine(
     target_draft_m=target_draft_m,
 )
 
-optimized_result = optimize_capex(base_inputs, True, True, True, True)
-result = optimize_capex(base_inputs, optimize_wtg, optimize_draft, optimize_pitch, optimize_offset)
+optimized_result = optimize_capex(base_inputs, False, True, True, True)
+result = optimize_capex(base_inputs, False, optimize_draft, optimize_pitch, optimize_offset)
 manual_result = evaluate_semisub(base_inputs)
 
 delta_musd = result.total_capex_musd - optimized_result.total_capex_musd
@@ -210,8 +239,8 @@ delta_pct = 100.0 * delta_musd / max(optimized_result.total_capex_musd, 1e-6)
 status = "PASS" if result.overall_pass else "CHECK"
 
 c1, c2, c3 = st.columns([1.2, 1, 1])
-c1.metric("Selected CAPEX", money_musd(result.total_capex_musd), f"{money_musd(delta_musd)} vs optimum")
-c2.metric("Optimized CAPEX", money_musd(optimized_result.total_capex_musd))
+c1.metric("Selected Foundation CAPEX", money_musd(result.total_capex_musd), f"{money_musd(delta_musd)} vs optimum")
+c2.metric("Optimized Foundation CAPEX", money_musd(optimized_result.total_capex_musd))
 c3.metric("CAPEX Penalty", f"{delta_pct:.1f}%", status)
 
 st.progress(min(1.0, max(0.0, result.total_capex_musd / max(optimized_result.total_capex_musd * 1.35, 1e-6))))
@@ -221,7 +250,7 @@ l1, l2, l3, l4 = st.columns(4)
 l1.metric("WTG capacity", compact_number(result.turbine_mw, "MW"))
 l2.metric("Draft", compact_number(result.draft_m, "m"))
 l3.metric("Pitch / heel", compact_number(result.static_heel_deg, "deg"), f"limit {result.allowable_pitch_deg:.1f} deg")
-l4.metric("Offset", compact_number(result.offset_pct_depth, "% depth"), f"limit {result.allowable_offset_m:.1f} m")
+l4.metric("Offset", compact_number(result.offset_m, "m"), f"limit {result.allowable_offset_m:.1f} m")
 
 st.subheader("Platform Layout")
 d1, d2 = st.columns(2)
@@ -233,12 +262,12 @@ with d2:
 st.subheader("CAPEX Breakdown")
 costs = pd.DataFrame(
     [
-        ["WTG supply", result.wtg_capex_musd],
         ["Platform steel and ballast", result.platform_capex_musd],
         ["Mooring and anchors", result.mooring_cost_musd],
         ["Electrical / balance of plant", result.balance_of_plant_musd],
         ["Installation", result.installation_capex_musd],
-        ["Total CAPEX", result.total_capex_musd],
+        ["Foundation CAPEX excl. WTG supply", result.total_capex_musd],
+        ["WTG supply shown separately", result.wtg_capex_musd],
     ],
     columns=["Item", "USD million"],
 )
@@ -250,8 +279,8 @@ comparison = pd.DataFrame(
         ["WTG capacity", base_inputs.turbine_mw, result.turbine_mw, "MW"],
         ["Draft", manual_result.draft_m, result.draft_m, "m"],
         ["Pitch / heel", manual_result.static_heel_deg, result.static_heel_deg, "deg"],
-        ["Offset", manual_result.offset_pct_depth, result.offset_pct_depth, "% water depth"],
-        ["Total CAPEX", manual_result.total_capex_musd, result.total_capex_musd, "USD million"],
+        ["Offset", manual_result.offset_m, result.offset_m, "m"],
+        ["Foundation CAPEX", manual_result.total_capex_musd, result.total_capex_musd, "USD million"],
     ],
     columns=["Lever", "Manual value", "Selected value", "Unit"],
 )
@@ -264,7 +293,7 @@ checks = pd.DataFrame(
         ["GM", result.gm_pass, f"{result.gm_m:.2f} m >= {gm_min_m:.1f} m"],
         ["Pitch / heel", result.stability_pass, f"{result.static_heel_deg:.2f} deg <= selected limit"],
         ["Port draft", result.port_pass, f"{result.draft_m:.1f} m <= {port_draft_limit_m:.1f} m"],
-        ["Offset", result.offset_pass, f"{result.offset_pct_depth:.2f}% <= selected limit"],
+        ["Offset", result.offset_pass, f"{result.offset_m:.2f} m <= {result.allowable_offset_m:.2f} m"],
         ["Mooring strength", result.mooring_pass, "Screened utilization <= 45%"],
         ["Ballast", result.ballast_pass, "Ballast positive and <75% displacement"],
     ],
@@ -272,7 +301,7 @@ checks = pd.DataFrame(
 )
 st.dataframe(checks, hide_index=True, width="stretch")
 
-with st.expander("WTG capacity relation used by the optimizer"):
+with st.expander("WTG capacity relation used for sizing loads"):
     turbine_table = pd.DataFrame(TURBINE_LIBRARY)
     turbine_table = turbine_table.rename(
         columns={

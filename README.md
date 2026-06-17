@@ -1,4 +1,4 @@
-# Floating Wind CAPEX Optimizer v0.4
+# Floating Wind Foundation CAPEX Optimizer v0.5
 
 Semi-sub template-based prototype implementing modules 1-6:
 
@@ -7,7 +7,7 @@ Semi-sub template-based prototype implementing modules 1-6:
 3. Hydrostatic analysis
 4. Static stability analysis
 5. Mooring and offset screening
-6. CAPEX optimization with mobile-friendly visual layout
+6. Foundation CAPEX optimization with mobile-friendly visual layout
 
 ## Run
 
@@ -20,11 +20,12 @@ This is concept-level screening only. It is not suitable for certification or FE
 
 Module 5 uses generic catenary mooring correlations to estimate required horizontal stiffness, selected line size, pretension, offset, mooring mass and indicative mooring cost.
 
-Module 6 adds a "Minimize CAPEX" workflow. The user can optimize or manually set four levers:
+Module 6 adds a "Minimize Foundation CAPEX" workflow. WTG capacity remains a user-selected sizing input, and WTG mass, CoG and thrust are taken from the built-in WTG table. WTG supply cost is shown separately but excluded from the optimization objective.
 
-1. WTG capacity
-2. Draft
-3. Pitch / heel limit
-4. Offset limit
+The user can optimize or manually set three foundation design levers:
 
-All cost outputs are shown in USD. The app also includes dynamic top-view and side-view platform sketches, and a maximum column diameter constraint set to 12 m by default.
+1. Draft
+2. Pitch / heel limit
+3. Offset limit
+
+All cost outputs are shown in USD. The app also includes dynamic top-view and side-view foundation sketches, and a maximum column diameter constraint set to 12 m by default.

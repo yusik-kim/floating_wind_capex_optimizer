@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Scope
 
-This report explains the engineering methods implemented in the current Floating Wind CAPEX Optimizer. The tool is intended for early concept screening of a generic three-column semi-submersible floating wind platform. It estimates platform geometry, displacement, ballast, static stability, mooring offset, mooring cost, and total CAPEX.
+This report explains the engineering methods implemented in the current Floating Wind Foundation CAPEX Optimizer. The tool is intended for early concept screening of a generic three-column semi-submersible floating wind platform. It estimates platform geometry, displacement, ballast, static stability, mooring offset, mooring cost, and foundation CAPEX excluding WTG supply cost.
 
 The methods are concept-level correlations. They are not a replacement for hydrostatic software, coupled time-domain analysis, detailed mooring design, structural design, FEED, class approval, or certification.
 
@@ -24,7 +24,7 @@ The primary user-controlled variables are:
 | `turbine_mw` | Wind turbine generator rated capacity |
 | `target_draft_m` | Target platform draft, if manual draft control is used |
 | `allowable_pitch_deg` | Allowable static pitch / heel angle |
-| `allowable_offset_pct_depth` | Allowable horizontal offset as percent of water depth |
+| `allowable_offset_pct_depth` | Allowable horizontal offset. The UI presents this in meters and converts it internally to percent of water depth |
 | `water_depth_m` | Site water depth |
 | `hs_m` | Significant wave height |
 | `tp_s` | Peak wave period, currently stored but not yet used in the equations |
@@ -691,13 +691,12 @@ installation_capex =
     / 1,000,000
 ```
 
-Total CAPEX is:
+Foundation CAPEX, excluding WTG supply cost, is:
 
 ```text
-total_capex =
+foundation_capex =
     platform_capex
     + mooring_cost
-    + wtg_capex
     + bop_capex
     + installation_capex
 ```
@@ -706,10 +705,17 @@ CAPEX per MW is:
 
 ```text
 capex_per_mw =
-    total_capex / turbine_mw
+    foundation_capex / turbine_mw
 ```
 
-All CAPEX outputs are in million USD.
+WTG supply cost is still calculated for information:
+
+```text
+wtg_capex =
+    turbine_mw * USD_PER_MW_WTG / 1,000,000
+```
+
+but it is not included in the optimization objective. All CAPEX outputs are in million USD.
 
 ## 23. Constraint Checks
 
@@ -765,10 +771,10 @@ overall_pass =
 
 ## 24. Candidate Scoring in `evaluate_semisub`
 
-Each geometry candidate starts with a score equal to total CAPEX:
+Each geometry candidate starts with a score equal to foundation CAPEX:
 
 ```text
-score = total_capex
+score = foundation_capex
 ```
 
 Penalty terms are added if constraints fail. For example:
@@ -798,12 +804,13 @@ The top-level optimizer searches four optional design variables:
 
 | Variable | Candidate values |
 | --- | --- |
-| WTG capacity | 8, 10, 12, 15, 18, 20 MW |
 | Draft | 14, 16, 18, 20, 22, 25, 28 m |
 | Pitch limit | 5, 6, 7, 8, 10 deg |
 | Offset limit | 3, 4, 5, 6, 8% water depth |
 
-If a variable is not optimized, the user-selected value is used instead.
+WTG capacity is selected by the user and is not optimized. The selected WTG capacity is still used to derive rotor diameter, mass, CoG and maximum thrust from the WTG table.
+
+If a foundation variable is not optimized, the user-selected value is used instead.
 
 For each candidate combination:
 
@@ -812,7 +819,7 @@ For each candidate combination:
 3. A score is assigned:
 
 ```text
-score = total_capex
+score = foundation_capex
 ```
 
 If the concept is infeasible:
@@ -827,7 +834,7 @@ The lowest score is selected as the optimized result.
 
 The optimizer should be interpreted as an early screening tool. It helps answer questions such as:
 
-- How does total CAPEX change if the turbine size changes?
+- How does foundation CAPEX change if the turbine size changes?
 - How much does stricter offset limit increase mooring cost?
 - Does a draft or column diameter constraint force a larger or more expensive design?
 - Is the selected platform concept stable enough under simplified static checks?
@@ -860,7 +867,6 @@ The next technical improvements should be:
 1. Replace the wave drift coefficient with calibrated site- and geometry-dependent equations.
 2. Add a real mooring stiffness model for catenary, semi-taut, and taut systems.
 3. Add platform motion constraints, especially pitch natural period and pitch response.
-4. Add CAPEX per MW or LCOE as an alternative objective, because pure total CAPEX tends to favor smaller turbines.
+4. Add LCOE or revenue-adjusted metrics as alternative objectives, because foundation CAPEX alone does not capture energy production value.
 5. Add multiple platform templates: semi-sub, spar, TLP, barge.
 6. Add calibration cases from public reference platforms.
-
