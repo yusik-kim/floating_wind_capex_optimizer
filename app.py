@@ -207,27 +207,30 @@ def platform_dynamic_svg(result, max_column_diameter_m: float, port_draft_limit_
 const initial = __INITIAL__;
 const state = {diameter: initial.diameter, spacing: initial.spacing, draft: initial.draft};
 const limits = {
-  diameter: [Math.max(5, initial.diameter * 0.55), Math.max(initial.maxDiameter, initial.diameter)],
-  spacing: [Math.max(35, initial.spacing * 0.65), initial.spacing * 1.55],
-  draft: [Math.max(6, initial.draft * 0.55), Math.max(initial.maxDraft, initial.draft)]
+  diameter: [Math.max(5, initial.diameter * 0.45), Math.max(initial.maxDiameter, initial.diameter * 1.05)],
+  spacing: [Math.max(30, initial.spacing * 0.45), initial.spacing * 2.0],
+  draft: [Math.max(5, initial.draft * 0.45), Math.max(initial.maxDraft, initial.draft * 1.7)]
 };
 const svg = document.getElementById("dyn-svg");
 let drag = null;
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function fmt(v) { return Number(v).toFixed(1); }
+function lerp(v, inLo, inHi, outLo, outHi) {
+  const t = (clamp(v, inLo, inHi) - inLo) / Math.max(inHi - inLo, 1e-6);
+  return outLo + t * (outHi - outLo);
+}
 function render() {
   const width = 900, height = 500, cx = 390, cy = 318;
-  const spacingScale = Math.min(2.25, 210 / Math.max(state.spacing, 1));
-  const radius = state.spacing / Math.sqrt(3) * spacingScale;
-  const colW = clamp(state.diameter * 3.2, 20, 48);
-  const draftH = clamp(state.draft * 5.3, 54, 126);
+  const radius = lerp(state.spacing, limits.spacing[0], limits.spacing[1], 70, 178);
+  const colW = lerp(state.diameter, limits.diameter[0], limits.diameter[1], 22, 54);
+  const draftH = lerp(state.draft, limits.draft[0], limits.draft[1], 48, 136);
   const freeboardH = clamp((initial.columnHeight - initial.draft) * 4.7, 20, 44);
   const pontoonW = clamp(initial.pontoonWidth * 2, 13, 28);
   const buoyancyMn = initial.buoyancyMn * (state.diameter / initial.diameter) ** 2 * (state.draft / initial.draft);
   const restoringMnm = initial.restoringMnm * (state.spacing / initial.spacing) ** 2 * (state.diameter / initial.diameter) ** 2;
-  const buoyArrow = clamp(buoyancyMn / 1.8, 48, 96);
-  const momentR = clamp(restoringMnm / 8, 46, 96);
-  const momentWidth = clamp(restoringMnm / 95, 5, 12);
+  const buoyArrow = clamp(buoyancyMn / 2.4, 42, 82);
+  const momentR = clamp(restoringMnm / 12, 38, 78);
+  const momentWidth = clamp(restoringMnm / 135, 4, 9);
   const pts = [
     [cx + radius * 1.18, cy - radius * 0.30],
     [cx - radius * 0.82, cy + radius * 0.46],
@@ -240,23 +243,20 @@ function render() {
   }).join("");
   const s1 = pts[1], s2 = pts[2], dia = pts[0];
   svg.innerHTML = `
-  <style>.bg{fill:#fff}.pontoon{stroke:#ef4444;stroke-width:${pontoonW.toFixed(1)};stroke-linecap:round;filter:url(#shadow)}.column-wet{fill:#dc2626;stroke:#991b1b;stroke-width:2;filter:url(#shadow)}.column-dry{fill:#d9f99d;stroke:#84cc16;stroke-width:2}.column-bottom{fill:#b91c1c;stroke:#991b1b;stroke-width:1.5}.column-top{fill:#e5ff7a;stroke:#84cc16;stroke-width:1.5}.green{fill:none;stroke:#84cc16;stroke-width:6}.handle{fill:#84cc16;stroke:#365314;stroke-width:2;cursor:grab}.handle:active{cursor:grabbing}.dim{stroke:#111827;stroke-width:1.3;fill:none;marker-start:url(#arrow);marker-end:url(#arrow)}.buoy{stroke:#7c3aed;stroke-width:9;stroke-linecap:round;opacity:.55;marker-end:url(#purpleArrow)}.moment{stroke:#06b6d4;stroke-width:${momentWidth.toFixed(1)};fill:none;stroke-linecap:round;opacity:.45;marker-end:url(#cyanArrow)}.label{font:15px system-ui,sans-serif;fill:#111827}.small{font:13px system-ui,sans-serif;fill:#334155}.note{font:13px system-ui,sans-serif;fill:#475569}</style>
-  <defs><marker id="arrow" markerWidth="5" markerHeight="5" refX="2.5" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 z" fill="#111827" /></marker><marker id="purpleArrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#7c3aed" /></marker><marker id="cyanArrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#06b6d4" /></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="6" dy="8" stdDeviation="5" flood-color="#000" flood-opacity=".20" /></filter></defs>
+  <style>.bg{fill:#fff}.pontoon{stroke:#ef4444;stroke-width:${pontoonW.toFixed(1)};stroke-linecap:round;filter:url(#shadow)}.column-wet{fill:#dc2626;stroke:#991b1b;stroke-width:2;filter:url(#shadow)}.column-dry{fill:#d9f99d;stroke:#84cc16;stroke-width:2}.column-bottom{fill:#b91c1c;stroke:#991b1b;stroke-width:1.5}.column-top{fill:#e5ff7a;stroke:#84cc16;stroke-width:1.5}.handle{fill:#84cc16;stroke:#365314;stroke-width:2;cursor:grab}.handle:active{cursor:grabbing}.dim{stroke:#111827;stroke-width:1.2;fill:none;marker-start:url(#arrow);marker-end:url(#arrow)}.buoy{stroke:#7c3aed;stroke-width:7;stroke-linecap:round;opacity:.48;marker-end:url(#purpleArrow)}.moment{stroke:#06b6d4;stroke-width:${momentWidth.toFixed(1)};fill:none;stroke-linecap:round;opacity:.48;marker-end:url(#cyanArrow)}.label{font:15px system-ui,sans-serif;fill:#111827}.small{font:13px system-ui,sans-serif;fill:#334155}.note{font:13px system-ui,sans-serif;fill:#475569}</style>
+  <defs><marker id="arrow" markerWidth="3.5" markerHeight="3.5" refX="1.75" refY="1.75" orient="auto"><path d="M0,0 L3.5,1.75 L0,3.5 z" fill="#111827" /></marker><marker id="purpleArrow" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 z" fill="#7c3aed" /></marker><marker id="cyanArrow" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 z" fill="#06b6d4" /></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="6" dy="8" stdDeviation="5" flood-color="#000" flood-opacity=".20" /></filter></defs>
   <rect class="bg" x="0" y="0" width="${width}" height="${height}" /><g>${arms}</g>${columns}
-  <ellipse class="green" cx="${s1[0].toFixed(1)}" cy="${(s1[1]-draftH-freeboardH).toFixed(1)}" rx="${(colW*.38).toFixed(1)}" ry="8" />
-  <path class="green" d="M ${s1[0].toFixed(1)} ${(s1[1]+24).toFixed(1)} L ${s2[0].toFixed(1)} ${(s2[1]+24).toFixed(1)}" />
-  <path class="green" d="M ${(s1[0]-30).toFixed(1)} ${(s1[1]-draftH).toFixed(1)} L ${(s1[0]-30).toFixed(1)} ${s1[1].toFixed(1)}" />
   <circle class="handle" data-var="diameter" cx="${(dia[0]+colW/2+18).toFixed(1)}" cy="${(dia[1]+26).toFixed(1)}" r="8" />
   <circle class="handle" data-var="spacing" cx="${((s1[0]+s2[0])/2).toFixed(1)}" cy="${(s1[1]+42).toFixed(1)}" r="8" />
   <circle class="handle" data-var="draft" cx="${(s1[0]-44).toFixed(1)}" cy="${(s1[1]-draftH/2).toFixed(1)}" r="8" />
   <circle cx="${cx}" cy="${cy}" r="9" fill="#fff" stroke="#ef4444" stroke-width="5" />
   <line class="buoy" x1="${cx+18}" y1="${cy-12}" x2="${cx+18}" y2="${(cy-buoyArrow).toFixed(1)}" />
-  <path class="moment" d="M ${cx+40} ${cy+18} A ${momentR.toFixed(1)} ${momentR.toFixed(1)} 0 0 1 ${(cx+momentR).toFixed(1)} ${(cy-momentR*.52).toFixed(1)}" />
+  <path class="moment" d="M ${(cx-22).toFixed(1)} ${(cy+58).toFixed(1)} A ${momentR.toFixed(1)} ${momentR.toFixed(1)} 0 0 0 ${(cx-momentR-18).toFixed(1)} ${(cy-18).toFixed(1)}" />
   <line class="dim" x1="${(s1[0]-44).toFixed(1)}" y1="${(s1[1]-draftH).toFixed(1)}" x2="${(s1[0]-44).toFixed(1)}" y2="${s1[1].toFixed(1)}" /><text class="label" x="${(s1[0]-82).toFixed(1)}" y="${(s1[1]+34).toFixed(1)}">Draft ${fmt(state.draft)} m</text>
   <line class="dim" x1="${(dia[0]-colW/2).toFixed(1)}" y1="${(dia[1]+26).toFixed(1)}" x2="${(dia[0]+colW/2).toFixed(1)}" y2="${(dia[1]+26).toFixed(1)}" /><text class="label" x="${(dia[0]-70).toFixed(1)}" y="${(dia[1]+54).toFixed(1)}">Column diameter ${fmt(state.diameter)} m</text>
   <line class="dim" x1="${s1[0].toFixed(1)}" y1="${(s1[1]+42).toFixed(1)}" x2="${s2[0].toFixed(1)}" y2="${(s2[1]+42).toFixed(1)}" /><text class="label" x="${(s1[0]-78).toFixed(1)}" y="${(s1[1]+72).toFixed(1)}">Column spacing ${fmt(state.spacing)} m</text>
-  <text class="label" x="${cx+56}" y="${(cy-buoyArrow-28).toFixed(1)}">Buoyancy ${fmt(buoyancyMn)} MN</text><text class="label" x="${(cx+momentR+32).toFixed(1)}" y="${cy+48}">Restoring moment ${restoringMnm.toFixed(0)} MNm</text>
-  <text class="small" x="34" y="40">Interactive visual sensitivity sketch: drag green handles</text><text class="note" x="610" y="82">Drag handles: diameter, spacing, draft</text><text class="note" x="610" y="106">Visual only; CAPEX is not recalculated here</text><text class="note" x="610" y="130">WTG and mooring lines are not visualized</text>`;
+  <text class="label" x="${cx+56}" y="${(cy-buoyArrow-28).toFixed(1)}">Buoyancy ${fmt(buoyancyMn)} MN</text><text class="label" x="${cx+84}" y="${cy+74}">Restoring moment ${restoringMnm.toFixed(0)} MNm</text>
+  <text class="small" x="34" y="40">Interactive visual sensitivity sketch: drag green dot</text><text class="note" x="610" y="82">Drag green dot: diameter, spacing, draft</text><text class="note" x="610" y="106">Visual only; CAPEX is not recalculated here</text><text class="note" x="610" y="130">Dots stop at project limits</text>`;
 }
 function svgPoint(evt) {
   const pt = svg.createSVGPoint();
@@ -273,9 +273,9 @@ svg.addEventListener("pointerdown", evt => {
 svg.addEventListener("pointermove", evt => {
   if (!drag) return;
   const p = svgPoint(evt);
-  if (drag.name === "diameter") state.diameter = clamp(drag.value + (p.x - drag.x) / 4, ...limits.diameter);
-  if (drag.name === "spacing") state.spacing = clamp(drag.value + (p.x - drag.x) / 1.8, ...limits.spacing);
-  if (drag.name === "draft") state.draft = clamp(drag.value + (p.y - drag.y) / 4.5, ...limits.draft);
+  if (drag.name === "diameter") state.diameter = clamp(drag.value + (p.x - drag.x) / 3, ...limits.diameter);
+  if (drag.name === "spacing") state.spacing = clamp(drag.value + (p.x - drag.x) / 1.2, ...limits.spacing);
+  if (drag.name === "draft") state.draft = clamp(drag.value + (p.y - drag.y) / 3.2, ...limits.draft);
   render();
 });
 svg.addEventListener("pointerup", () => drag = null);
