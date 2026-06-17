@@ -29,7 +29,7 @@ The primary user-controlled variables are:
 | `hs_m` | Significant wave height |
 | `tp_s` | Peak wave period, currently stored but not yet used in the equations |
 | `port_draft_limit_m` | Maximum allowable draft for port / tow-out |
-| `max_column_diameter_m` | Maximum allowed column diameter, default 12 m |
+| `max_column_diameter_m` | Maximum allowed column diameter, default 15 m |
 | `mooring_line_count` | Number of mooring lines |
 | `mooring_safety_factor` | Safety factor used in required horizontal stiffness |
 | `mooring_cost_multiplier` | User multiplier for mooring cost sensitivity |
@@ -769,38 +769,42 @@ overall_pass =
     and mooring_pass
 ```
 
-## 24. Candidate Scoring in `evaluate_semisub`
+## 24. Feasible Candidate Selection in `evaluate_semisub`
 
-Each geometry candidate starts with a score equal to foundation CAPEX:
-
-```text
-score = foundation_capex
-```
-
-Penalty terms are added if constraints fail. For example:
+Each geometry candidate is evaluated against the physical constraints first. A candidate is treated as feasible only when:
 
 ```text
-if GM < gm_min:
-    score += 100000 * (gm_min - GM)
+overall_pass = True
 ```
+
+Foundation CAPEX is then minimized only among feasible candidates:
 
 ```text
-if draft > port_draft_limit:
-    score += 100000 * (draft - port_draft_limit)
+minimize foundation_capex
+subject to overall_pass = True
 ```
+
+This means a lower-cost candidate is not allowed to win if it violates GM, pitch, restoring ratio, draft, ballast, column diameter, offset, or mooring strength constraints.
+
+If no feasible candidate exists in the searched geometry range, the function returns a diagnostic candidate. This fallback is not called a feasible optimum. It is selected by the smallest physical violation margin so the UI can explain which constraint is blocking feasibility.
+
+For a failed candidate, each constraint is converted to a ratio:
 
 ```text
-if column_diameter > max_column_diameter:
-    score += 100000 * (column_diameter - max_column_diameter)
+constraint_margin = actual_value / allowable_value
 ```
 
-The same idea is used for restoring ratio, static heel, ballast, offset, and mooring strength.
+or, for lower-bound constraints:
 
-Important implementation note: `evaluate_semisub` returns the first feasible candidate encountered in its ordered search. The search order starts with smaller geometry and lower draft candidates, so the first feasible solution is usually a low-mass / low-cost concept. If no feasible candidate is found, the function returns the lowest-penalty candidate.
+```text
+constraint_margin = required_value / actual_value
+```
+
+A margin below or equal to 1.0 satisfies the constraint. A margin above 1.0 violates it. The largest failed margin is reported as the most restrictive constraint to relax.
 
 ## 25. CAPEX Optimization in `optimize_capex`
 
-The top-level optimizer searches four optional design variables:
+The top-level optimizer searches optional foundation design variables:
 
 | Variable | Candidate values |
 | --- | --- |
@@ -816,19 +820,22 @@ For each candidate combination:
 
 1. Turbine properties are updated from the WTG table.
 2. `evaluate_semisub` generates a platform concept.
-3. A score is assigned:
+3. If the candidate is feasible, it is eligible for CAPEX minimization.
+4. If the candidate is infeasible, it is retained only as diagnostic information.
+
+The selected optimized result is:
 
 ```text
-score = foundation_capex
+lowest foundation CAPEX among feasible candidates
 ```
 
-If the concept is infeasible:
+If no feasible candidate exists in the discrete search range, the UI reports:
 
 ```text
-score += 1,000,000
+No feasible design found.
 ```
 
-The lowest score is selected as the optimized result. If at least one feasible candidate exists, the feasible candidate with the lowest foundation CAPEX is selected. If no feasible candidate exists in the discrete search range, the tool returns the lowest-penalty candidate and the UI reports that no feasible design was found.
+and asks the user to relax the most restrictive physical constraint.
 
 ## 26. Interpretation of Results
 
@@ -838,7 +845,7 @@ The optimizer should be interpreted as an early screening tool. It helps answer 
 - How much does stricter offset limit increase mooring cost?
 - Does a draft or column diameter constraint force a larger or more expensive design?
 - Is the selected platform concept stable enough under simplified static checks?
-- What is the approximate CAPEX penalty relative to the optimized concept?
+- Which physical constraint prevents a feasible design?
 
 ## 27. Current Limitations
 

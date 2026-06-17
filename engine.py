@@ -1,5 +1,5 @@
 """
-Floating Wind Concept Optimizer v0.4
+Floating Wind Foundation CAPEX Optimizer v0.5
 Semi-sub template modules 1-5:
 1) Template platform scaling
 2) Weight estimation
@@ -67,7 +67,7 @@ class DesignInputs:
     allowable_offset_pct_depth: float = 5.0
     mooring_safety_factor: float = 1.5
     mooring_cost_multiplier: float = 1.0
-    max_column_diameter_m: float = 12.0
+    max_column_diameter_m: float = 15.0
     target_draft_m: float | None = None
 
 
@@ -161,7 +161,7 @@ def design_inputs_from_turbine(
     allowable_offset_pct_depth: float = 5.0,
     mooring_safety_factor: float = 1.5,
     mooring_cost_multiplier: float = 1.0,
-    max_column_diameter_m: float = 12.0,
+    max_column_diameter_m: float = 15.0,
     target_draft_m: float | None = None,
 ) -> DesignInputs:
     turbine = turbine_from_capacity(turbine_mw)
@@ -292,6 +292,35 @@ def _capex_breakdown(inputs: DesignInputs, structural_mass_t: float, ballast_t: 
     }
 
 
+def _constraint_margins_from_inputs(inputs: DesignInputs, result: SemiSubResult) -> dict[str, float]:
+    ballast_upper = result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6)
+    ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
+    mooring_utilization = (
+        result.environmental_force_mn
+        * inputs.mooring_safety_factor
+        / max(inputs.mooring_line_count * 0.00055 * result.mooring_line_diameter_mm**2, 1e-6)
+    )
+    return {
+        "column diameter": result.column_diameter_m / max(inputs.max_column_diameter_m, 1e-6),
+        "GM": inputs.gm_min_m / max(result.gm_m, 1e-6),
+        "pitch / heel": result.static_heel_deg / max(inputs.allowable_pitch_deg, 1e-6),
+        "restoring ratio": inputs.restoring_ratio_min / max(result.restoring_ratio, 1e-6),
+        "port draft": result.draft_m / max(inputs.port_draft_limit_m, 1e-6),
+        "ballast positive": ballast_positive,
+        "ballast fraction": ballast_upper,
+        "offset": result.offset_m / max(result.allowable_offset_m, 1e-6),
+        "mooring strength": mooring_utilization / 0.45,
+    }
+
+
+def most_restrictive_constraint(inputs: DesignInputs, result: SemiSubResult) -> tuple[str, float]:
+    margins = _constraint_margins_from_inputs(inputs, result)
+    failed = {name: margin for name, margin in margins.items() if margin > 1.0}
+    if not failed:
+        return ("none", 1.0)
+    return max(failed.items(), key=lambda item: item[1])
+
+
 def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = None) -> SemiSubResult:
     template = template or SemiSubTemplate()
 
@@ -305,8 +334,11 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
     if inputs.target_draft_m is not None:
         draft_mults = [max(0.55, min(1.60, inputs.target_draft_m / max(template.draft_m * s, 1e-6)))]
 
-    # Iterate modestly over additional stability scale and draft to meet constraints.
-    for geom_mult in [1.00, 1.05, 1.10, 1.15, 1.20, 1.30, 1.40, 1.55, 1.70, 1.90, 2.10]:
+    feasible_best = None
+    diagnostic_best = None
+
+    # Iterate over stability scale and draft to meet constraints, then minimize CAPEX among feasible designs.
+    for geom_mult in [0.90, 1.00, 1.05, 1.10, 1.15, 1.20, 1.30, 1.40, 1.55, 1.70, 1.90, 2.10, 2.35, 2.60]:
         for draft_mult in draft_mults:
             col_dia = template.column_diameter_m * s * geom_mult
             spacing = template.column_spacing_m * s * geom_mult
@@ -353,26 +385,7 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
             mooring_pass = mooring["mooring_pass"]
             capex = _capex_breakdown(inputs, structural_mass, ballast_t, mooring["mooring_cost_musd"])
             overall = gm_pass and stability_pass and port_pass and ballast_pass and column_diameter_pass and offset_pass and mooring_pass
-            score = capex["total_capex_musd"]
-            if not gm_pass:
-                score += 100000 * (inputs.gm_min_m - gm)
-            if not stability_pass:
-                score += 100000 * max(0.0, inputs.restoring_ratio_min - ratio)
-                score += 10000 * max(0.0, static_heel - inputs.allowable_pitch_deg)
-            if not port_pass:
-                score += 100000 * (draft - inputs.port_draft_limit_m)
-            if not column_diameter_pass:
-                score += 100000 * (col_dia - inputs.max_column_diameter_m)
-            if not ballast_pass:
-                if ballast_t <= 0:
-                    score += 100000 * (1.0 + abs(ballast_t) / max(buoyancy_t, 1.0))
-                else:
-                    score += 100000 * max(0.0, ballast_t / max(buoyancy_t, 1.0) - 0.75)
-            if not offset_pass:
-                score += 100000 * (mooring["offset_m"] / max(mooring["allowable_offset_m"], 1e-6) - 1.0)
-            if not mooring_pass:
-                score += 10000
-            candidate = (score, SemiSubResult(
+            result = SemiSubResult(
                 template=template.name,
                 turbine_mw=inputs.turbine_mw,
                 allowable_pitch_deg=inputs.allowable_pitch_deg,
@@ -424,12 +437,20 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                 mooring_pass=mooring_pass,
                 overall_pass=overall,
                 notes="Concept-level estimate. Geometry and mooring are generated from generic semi-sub and catenary-screening correlations."
-            ))
-            if best is None or candidate[0] < best[0]:
-                best = candidate
+            )
             if overall:
-                return candidate[1]
-    return best[1]
+                if feasible_best is None or result.total_capex_musd < feasible_best.total_capex_musd:
+                    feasible_best = result
+            else:
+                margins = _constraint_margins_from_inputs(inputs, result)
+                violation = sum(max(0.0, margin - 1.0) ** 2 for margin in margins.values())
+                diagnostic_key = (violation, result.total_capex_musd)
+                if diagnostic_best is None or diagnostic_key < diagnostic_best[0]:
+                    diagnostic_best = (diagnostic_key, result)
+
+    if feasible_best is not None:
+        return feasible_best
+    return diagnostic_best[1]
 
 
 def optimize_capex(
@@ -446,7 +467,8 @@ def optimize_capex(
     pitch_values = [5.0, 6.0, 7.0, 8.0, 10.0] if optimize_pitch else [base_inputs.allowable_pitch_deg]
     offset_values = [3.0, 4.0, 5.0, 6.0, 8.0] if optimize_offset else [base_inputs.allowable_offset_pct_depth]
 
-    best = None
+    feasible_best = None
+    diagnostic_best = None
     for mw in turbine_values:
         turbine = turbine_from_capacity(mw)
         for draft in draft_values:
@@ -465,11 +487,18 @@ def optimize_capex(
                         allowable_offset_pct_depth=offset,
                     )
                     result = evaluate_semisub(candidate_inputs)
-                    penalty = 0.0 if result.overall_pass else 1_000_000.0
-                    score = result.total_capex_musd + penalty
-                    if best is None or score < best[0]:
-                        best = (score, result)
-    return best[1]
+                    if result.overall_pass:
+                        if feasible_best is None or result.total_capex_musd < feasible_best.total_capex_musd:
+                            feasible_best = result
+                    else:
+                        margins = _constraint_margins_from_inputs(candidate_inputs, result)
+                        violation = sum(max(0.0, margin - 1.0) ** 2 for margin in margins.values())
+                        diagnostic_key = (violation, result.total_capex_musd)
+                        if diagnostic_best is None or diagnostic_key < diagnostic_best[0]:
+                            diagnostic_best = (diagnostic_key, result)
+    if feasible_best is not None:
+        return feasible_best
+    return diagnostic_best[1]
 
 
 def result_as_dict(result: SemiSubResult) -> dict:

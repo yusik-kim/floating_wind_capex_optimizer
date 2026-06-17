@@ -43,6 +43,40 @@ def failed_constraints(result) -> list[str]:
     return [name for name, passed in checks if not passed]
 
 
+def constraint_margins_for_ui(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor):
+    mooring_mbl = 0.00055 * result.mooring_line_diameter_mm**2
+    mooring_utilization = result.environmental_force_mn * mooring_safety_factor / max(mooring_line_count * mooring_mbl, 1e-6)
+    ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
+    return {
+        "column diameter": (result.column_diameter_m / max(max_column_diameter_m, 1e-6), f"increase max column diameter above {result.column_diameter_m:.1f} m"),
+        "GM": (gm_min_m / max(result.gm_m, 1e-6), f"reduce minimum GM below {result.gm_m:.2f} m or allow larger geometry"),
+        "pitch / heel": (result.static_heel_deg / max(result.allowable_pitch_deg, 1e-6), f"increase pitch limit above {result.static_heel_deg:.1f} deg or allow larger geometry"),
+        "restoring ratio": (restoring_ratio_min / max(result.restoring_ratio, 1e-6), f"reduce restoring ratio below {result.restoring_ratio:.2f} or allow larger geometry"),
+        "port draft": (result.draft_m / max(port_draft_limit_m, 1e-6), f"increase port draft limit above {result.draft_m:.1f} m"),
+        "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
+        "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
+        "offset": (result.offset_m / max(result.allowable_offset_m, 1e-6), f"increase offset limit above {result.offset_m:.1f} m"),
+        "mooring strength": (mooring_utilization / 0.45, "increase line count, reduce safety factor, or allow larger/mooring-costlier lines"),
+    }
+
+
+def most_restrictive_message(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor) -> str:
+    margins = constraint_margins_for_ui(
+        result,
+        gm_min_m,
+        restoring_ratio_min,
+        port_draft_limit_m,
+        max_column_diameter_m,
+        mooring_line_count,
+        mooring_safety_factor,
+    )
+    failed = {name: data for name, data in margins.items() if data[0] > 1.0}
+    if not failed:
+        return "No failed physical constraint."
+    name, (margin, advice) = max(failed.items(), key=lambda item: item[1][0])
+    return f"Most restrictive constraint: {name} ({margin:.2f}x limit). Try to {advice}."
+
+
 def platform_top_svg(result) -> str:
     width, height = 560, 360
     cx, cy = width / 2, height / 2
@@ -236,8 +270,8 @@ with st.sidebar:
         allowable_offset_m = min(manual_allowable_offset_m, water_depth_m * 0.50)
     allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
 
-    st.header("Constraints")
-    max_column_diameter_m = st.number_input("Max column diameter [m]", 6.0, 30.0, 12.0, 0.5)
+    st.header("Physical constraints")
+    max_column_diameter_m = st.number_input("Max column diameter [m]", 6.0, 30.0, 15.0, 0.5)
     gm_min_m = st.number_input("Minimum GM [m]", 0.5, 10.0, 2.0, 0.5)
     restoring_ratio_min = st.number_input("Minimum restoring / heeling ratio", 1.0, 3.0, 1.3, 0.1)
     mooring_line_count = st.number_input("Number of mooring lines", 3, 12, 3, 1)
@@ -275,21 +309,39 @@ delta_label = f"{money_musd(delta_musd)} vs feasible optimum" if optimized_resul
 c1, c2, c3 = st.columns([1.2, 1, 1])
 c1.metric(selected_label, money_musd(result.total_capex_musd), delta_label)
 c2.metric(optimized_label, money_musd(optimized_result.total_capex_musd))
-c3.metric("CAPEX Penalty", f"{delta_pct:.1f}%", status)
+c3.metric("CAPEX Delta", f"{delta_pct:.1f}%", status)
 
 st.progress(min(1.0, max(0.0, result.total_capex_musd / max(optimized_result.total_capex_musd * 1.35, 1e-6))))
 
 if not optimized_result.overall_pass:
     blockers = ", ".join(failed_constraints(optimized_result))
+    relax = most_restrictive_message(
+        optimized_result,
+        gm_min_m,
+        restoring_ratio_min,
+        port_draft_limit_m,
+        max_column_diameter_m,
+        mooring_line_count,
+        mooring_safety_factor,
+    )
     st.error(
         "No feasible design was found within the current search range and constraints. "
-        f"The displayed result is the lowest-penalty candidate, blocked by: {blockers}."
+        f"The displayed result is the closest diagnostic candidate, blocked by: {blockers}. {relax}"
     )
 elif not result.overall_pass:
     blockers = ", ".join(failed_constraints(result))
+    relax = most_restrictive_message(
+        result,
+        gm_min_m,
+        restoring_ratio_min,
+        port_draft_limit_m,
+        max_column_diameter_m,
+        mooring_line_count,
+        mooring_safety_factor,
+    )
     st.warning(
         "The selected manual settings do not satisfy all constraints. "
-        f"Blocking checks: {blockers}."
+        f"Blocking checks: {blockers}. {relax}"
     )
 
 st.subheader("Four Main Levers")

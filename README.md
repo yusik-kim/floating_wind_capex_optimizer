@@ -28,4 +28,4 @@ The user can optimize or manually set three foundation design levers:
 2. Pitch / heel limit
 3. Offset limit
 
-All cost outputs are shown in USD. The app also includes dynamic top-view and side-view foundation sketches, and a maximum column diameter constraint set to 12 m by default.
+All cost outputs are shown in USD. The app also includes dynamic top-view and side-view foundation sketches, and a maximum column diameter constraint set to 15 m by default.
