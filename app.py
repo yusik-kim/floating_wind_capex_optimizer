@@ -2,6 +2,7 @@ import math
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from engine import (
     CHAIN_LIBRARY,
@@ -186,17 +187,17 @@ def platform_side_svg(result, max_column_diameter_m: float, port_draft_limit_m: 
 
 
 def platform_dynamic_svg(result) -> str:
-    width, height = 900, 520
-    cx, cy = 405, 300
-    spacing_scale = min(2.5, 230.0 / max(result.column_spacing_m, 1.0))
+    width, height = 900, 500
+    cx, cy = 390, 318
+    spacing_scale = min(2.25, 210.0 / max(result.column_spacing_m, 1.0))
     radius = result.column_spacing_m / math.sqrt(3.0) * spacing_scale
-    col_w = max(24.0, min(58.0, result.column_diameter_m * 3.6))
-    draft_h = max(58.0, min(150.0, result.draft_m * 6.0))
-    freeboard_h = max(22.0, min(52.0, (result.column_height_m - result.draft_m) * 5.5))
+    col_w = max(20.0, min(48.0, result.column_diameter_m * 3.2))
+    draft_h = max(54.0, min(126.0, result.draft_m * 5.3))
+    freeboard_h = max(20.0, min(44.0, (result.column_height_m - result.draft_m) * 4.7))
     pontoon_w = max(13.0, min(28.0, result.pontoon_width_m * 2.0))
-    buoy_arrow = max(58.0, min(132.0, result.buoyancy_t / 180.0))
-    moment_r = max(48.0, min(118.0, result.restoring_moment_mnm / 8.0))
-    moment_width = max(8.0, min(22.0, result.restoring_moment_mnm / 55.0))
+    buoy_arrow = max(52.0, min(112.0, result.buoyancy_t / 210.0))
+    moment_r = max(48.0, min(105.0, result.restoring_moment_mnm / 8.0))
+    moment_width = max(7.0, min(17.0, result.restoring_moment_mnm / 70.0))
     points = [
         (cx + radius * 1.18, cy - radius * 0.30),
         (cx - radius * 0.82, cy + radius * 0.46),
@@ -206,72 +207,28 @@ def platform_dynamic_svg(result) -> str:
         f'<line class="pontoon" x1="{cx:.1f}" y1="{cy:.1f}" x2="{x:.1f}" y2="{y:.1f}" />'
         for x, y in points
     )
-    columns = ""
+    column_parts = []
     for i, (x, y) in enumerate(points):
-        green = '<ellipse class="green-ring" cx="{:.1f}" cy="{:.1f}" rx="{:.1f}" ry="8" />'.format(x, y - draft_h - freeboard_h, col_w * 0.36) if i == 1 else ""
-        columns += f"""
-        <g>
-          <rect class="column-wet" x="{x-col_w/2:.1f}" y="{y-draft_h:.1f}" width="{col_w:.1f}" height="{draft_h:.1f}" rx="6" />
-          <ellipse class="column-bottom" cx="{x:.1f}" cy="{y:.1f}" rx="{col_w/2:.1f}" ry="8" />
-          <rect class="column-dry" x="{x-col_w/2:.1f}" y="{y-draft_h-freeboard_h:.1f}" width="{col_w:.1f}" height="{freeboard_h:.1f}" rx="6" />
-          <ellipse class="column-top" cx="{x:.1f}" cy="{y-draft_h-freeboard_h:.1f}" rx="{col_w/2:.1f}" ry="8" />
-          {green}
-        </g>
-        """
+        top_y = y - draft_h - freeboard_h
+        column_parts.append(f'<g><rect class="column-wet" x="{x-col_w/2:.1f}" y="{y-draft_h:.1f}" width="{col_w:.1f}" height="{draft_h:.1f}" rx="6" /><ellipse class="column-bottom" cx="{x:.1f}" cy="{y:.1f}" rx="{col_w/2:.1f}" ry="8" /><rect class="column-dry" x="{x-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{freeboard_h:.1f}" rx="6" /><ellipse class="column-top" cx="{x:.1f}" cy="{top_y:.1f}" rx="{col_w/2:.1f}" ry="8" /></g>')
+    columns = "".join(column_parts)
     spacing_x1, spacing_y1 = points[1]
     spacing_x2, spacing_y2 = points[2]
-    return f"""
-    <svg viewBox="0 0 {width} {height}" role="img" aria-label="Dynamic foundation geometry and force sketch">
-      <style>
-        .bg {{ fill:#ffffff; }}
-        .pontoon {{ stroke:#ef4444; stroke-width:{pontoon_w:.1f}; stroke-linecap:round; filter:url(#shadow); }}
-        .column-wet {{ fill:#dc2626; stroke:#991b1b; stroke-width:2; filter:url(#shadow); }}
-        .column-dry {{ fill:#d9f99d; stroke:#84cc16; stroke-width:2; }}
-        .column-bottom {{ fill:#b91c1c; stroke:#991b1b; stroke-width:1.5; }}
-        .column-top {{ fill:#e5ff7a; stroke:#84cc16; stroke-width:1.5; }}
-        .green-ring {{ fill:none; stroke:#84cc16; stroke-width:7; }}
-        .dim {{ stroke:#111827; stroke-width:1.4; fill:none; marker-start:url(#arrow); marker-end:url(#arrow); }}
-        .leader {{ stroke:#111827; stroke-width:1.2; fill:none; marker-end:url(#arrow); }}
-        .buoy {{ stroke:#7c3aed; stroke-width:13; stroke-linecap:round; opacity:0.76; marker-end:url(#purpleArrow); }}
-        .moment {{ stroke:#06b6d4; stroke-width:{moment_width:.1f}; fill:none; stroke-linecap:round; opacity:0.64; marker-end:url(#cyanArrow); }}
-        .label {{ font: 15px system-ui, sans-serif; fill:#111827; }}
-        .small {{ font: 13px system-ui, sans-serif; fill:#334155; }}
-        .note {{ font: 13px system-ui, sans-serif; fill:#475569; }}
-      </style>
-      <defs>
-        <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
-          <path d="M0,0 L8,4 L0,8 z" fill="#111827" />
-        </marker>
-        <marker id="purpleArrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
-          <path d="M0,0 L10,5 L0,10 z" fill="#7c3aed" />
-        </marker>
-        <marker id="cyanArrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
-          <path d="M0,0 L10,5 L0,10 z" fill="#06b6d4" />
-        </marker>
-        <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
-          <feDropShadow dx="6" dy="8" stdDeviation="5" flood-color="#000000" flood-opacity="0.20" />
-        </filter>
-      </defs>
-      <rect class="bg" x="0" y="0" width="{width}" height="{height}" />
-      <g>{arms}</g>
-      {columns}
-      <circle cx="{cx:.1f}" cy="{cy:.1f}" r="9" fill="#ffffff" stroke="#ef4444" stroke-width="5" />
-      <line class="buoy" x1="{cx+18:.1f}" y1="{cy-12:.1f}" x2="{cx+18:.1f}" y2="{cy-buoy_arrow:.1f}" />
-      <path class="moment" d="M {cx+40:.1f} {cy+18:.1f} A {moment_r:.1f} {moment_r:.1f} 0 0 1 {cx+moment_r:.1f} {cy-moment_r*0.52:.1f}" />
-      <line class="dim" x1="{points[1][0]-44:.1f}" y1="{points[1][1]-draft_h:.1f}" x2="{points[1][0]-44:.1f}" y2="{points[1][1]:.1f}" />
-      <text class="label" x="{points[1][0]-80:.1f}" y="{points[1][1]+34:.1f}">Draft {result.draft_m:.1f} m</text>
-      <line class="dim" x1="{points[0][0]-col_w/2:.1f}" y1="{points[0][1]+26:.1f}" x2="{points[0][0]+col_w/2:.1f}" y2="{points[0][1]+26:.1f}" />
-      <text class="label" x="{points[0][0]-70:.1f}" y="{points[0][1]+54:.1f}">Column diameter {result.column_diameter_m:.1f} m</text>
-      <line class="dim" x1="{spacing_x1:.1f}" y1="{spacing_y1+42:.1f}" x2="{spacing_x2:.1f}" y2="{spacing_y2+42:.1f}" />
-      <text class="label" x="{spacing_x1-78:.1f}" y="{spacing_y1+72:.1f}">Column spacing {result.column_spacing_m:.1f} m</text>
-      <text class="label" x="{cx+38:.1f}" y="{cy-buoy_arrow-18:.1f}">Buoyancy {result.buoyancy_t * 9.81 / 1000.0:.1f} MN</text>
-      <text class="label" x="{cx+moment_r+20:.1f}" y="{cy+38:.1f}">Restoring moment {result.restoring_moment_mnm:.0f} MNm</text>
-      <text class="small" x="34" y="40">Dynamic screening sketch: geometry, buoyancy, and restoring response</text>
-      <text class="note" x="610" y="82">Green highlights: diameter, spacing, draft</text>
-      <text class="note" x="610" y="106">Vectors update with current optimized geometry</text>
-      <text class="note" x="610" y="130">WTG and mooring lines are not visualized</text>
-    </svg>
-    """
+    style = f".bg{{fill:#fff}}.pontoon{{stroke:#ef4444;stroke-width:{pontoon_w:.1f};stroke-linecap:round;filter:url(#shadow)}}.column-wet{{fill:#dc2626;stroke:#991b1b;stroke-width:2;filter:url(#shadow)}}.column-dry{{fill:#d9f99d;stroke:#84cc16;stroke-width:2}}.column-bottom{{fill:#b91c1c;stroke:#991b1b;stroke-width:1.5}}.column-top{{fill:#e5ff7a;stroke:#84cc16;stroke-width:1.5}}.green-ring{{fill:none;stroke:#84cc16;stroke-width:7}}.dim{{stroke:#111827;stroke-width:1.4;fill:none;marker-start:url(#arrow);marker-end:url(#arrow)}}.buoy{{stroke:#7c3aed;stroke-width:11;stroke-linecap:round;opacity:.62;marker-end:url(#purpleArrow)}}.moment{{stroke:#06b6d4;stroke-width:{moment_width:.1f};fill:none;stroke-linecap:round;opacity:.50;marker-end:url(#cyanArrow)}}.label{{font:15px system-ui,sans-serif;fill:#111827}}.small{{font:13px system-ui,sans-serif;fill:#334155}}.note{{font:13px system-ui,sans-serif;fill:#475569}}"
+    defs = '<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#111827" /></marker><marker id="purpleArrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7c3aed" /></marker><marker id="cyanArrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#06b6d4" /></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="6" dy="8" stdDeviation="5" flood-color="#000" flood-opacity=".20" /></filter></defs>'
+    highlights = (
+        f'<ellipse class="green-ring" cx="{points[1][0]:.1f}" cy="{points[1][1]-draft_h-freeboard_h:.1f}" rx="{col_w*0.38:.1f}" ry="8" />'
+        f'<path class="green-ring" d="M {spacing_x1:.1f} {spacing_y1+24:.1f} L {spacing_x2:.1f} {spacing_y2+24:.1f}" />'
+        f'<path class="green-ring" d="M {points[1][0]-30:.1f} {points[1][1]-draft_h:.1f} L {points[1][0]-30:.1f} {points[1][1]:.1f}" />'
+    )
+    labels = (
+        f'<line class="dim" x1="{points[1][0]-44:.1f}" y1="{points[1][1]-draft_h:.1f}" x2="{points[1][0]-44:.1f}" y2="{points[1][1]:.1f}" /><text class="label" x="{points[1][0]-82:.1f}" y="{points[1][1]+34:.1f}">Draft {result.draft_m:.1f} m</text>'
+        f'<line class="dim" x1="{points[0][0]-col_w/2:.1f}" y1="{points[0][1]+26:.1f}" x2="{points[0][0]+col_w/2:.1f}" y2="{points[0][1]+26:.1f}" /><text class="label" x="{points[0][0]-70:.1f}" y="{points[0][1]+54:.1f}">Column diameter {result.column_diameter_m:.1f} m</text>'
+        f'<line class="dim" x1="{spacing_x1:.1f}" y1="{spacing_y1+42:.1f}" x2="{spacing_x2:.1f}" y2="{spacing_y2+42:.1f}" /><text class="label" x="{spacing_x1-78:.1f}" y="{spacing_y1+72:.1f}">Column spacing {result.column_spacing_m:.1f} m</text>'
+        f'<text class="label" x="{cx+56:.1f}" y="{cy-buoy_arrow-28:.1f}">Buoyancy {result.buoyancy_t * 9.81 / 1000.0:.1f} MN</text><text class="label" x="{cx+moment_r+32:.1f}" y="{cy+48:.1f}">Restoring moment {result.restoring_moment_mnm:.0f} MNm</text>'
+        '<text class="small" x="34" y="40">Dynamic screening sketch: geometry, buoyancy, and restoring response</text><text class="note" x="610" y="82">Green highlights: diameter, spacing, draft</text><text class="note" x="610" y="106">Vectors update with current optimized geometry</text><text class="note" x="610" y="130">WTG and mooring lines are not visualized</text>'
+    )
+    return f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Dynamic foundation geometry and force sketch"><style>{style}</style>{defs}<rect class="bg" x="0" y="0" width="{width}" height="{height}" /><g>{arms}</g>{columns}{highlights}<circle cx="{cx:.1f}" cy="{cy:.1f}" r="9" fill="#fff" stroke="#ef4444" stroke-width="5" /><line class="buoy" x1="{cx+18:.1f}" y1="{cy-12:.1f}" x2="{cx+18:.1f}" y2="{cy-buoy_arrow:.1f}" /><path class="moment" d="M {cx+40:.1f} {cy+18:.1f} A {moment_r:.1f} {moment_r:.1f} 0 0 1 {cx+moment_r:.1f} {cy-moment_r*0.52:.1f}" />{labels}</svg>'
 
 
 st.markdown(
@@ -398,7 +355,7 @@ with d1:
     st.markdown(platform_top_svg(result), unsafe_allow_html=True)
 with d2:
     st.markdown(platform_side_svg(result, max_column_diameter_m, port_draft_limit_m), unsafe_allow_html=True)
-st.markdown(platform_dynamic_svg(result), unsafe_allow_html=True)
+components.html(platform_dynamic_svg(result), height=520, scrolling=False)
 
 st.subheader("CAPEX Breakdown")
 costs = pd.DataFrame(
