@@ -55,7 +55,7 @@ def platform_top_svg(result) -> str:
       <style>
         .bg {{ fill:#ffffff; }}
         .arm {{ stroke:#ef4444; stroke-width:15; stroke-linecap:round; filter:url(#shadow); }}
-        .column {{ fill:#fff200; stroke:#d4a900; stroke-width:1.5; }}
+        .column {{ fill:#ef4444; stroke:#b91c1c; stroke-width:2; }}
         .center {{ fill:#ffffff; stroke:#ef4444; stroke-width:5; }}
         .dim {{ stroke:#111827; stroke-width:1; marker-start:url(#arrow); marker-end:url(#arrow); }}
         .thin {{ stroke:#111827; stroke-width:1; fill:none; }}
@@ -77,8 +77,6 @@ def platform_top_svg(result) -> str:
       <line class="dim" x1="{points[2][0]:.1f}" y1="{points[2][1]-28:.1f}" x2="{points[0][0]:.1f}" y2="{points[0][1]-28:.1f}" />
       <text class="label" x="{(points[2][0]+points[0][0])/2-20:.1f}" y="{points[0][1]-38:.1f}">{result.column_spacing_m:.1f} m</text>
       <text class="label" x="{points[2][0]-54:.1f}" y="{points[2][1]-8:.1f}">Dia {result.column_diameter_m:.1f} m</text>
-      <path class="thin" d="M {points[0][0]+18:.1f},{points[0][1]-34:.1f} A 112,112 0 0 1 {points[1][0]+18:.1f},{points[1][1]+26:.1f}" />
-      <text class="label" x="{points[0][0]+52:.1f}" y="{cy+2:.1f}" transform="rotate(86 {points[0][0]+52:.1f},{cy+2:.1f})">120 deg</text>
       <text class="small" x="20" y="334">Top view: 3-column semi-sub layout</text>
     </svg>
     """
@@ -86,11 +84,15 @@ def platform_top_svg(result) -> str:
 
 def platform_side_svg(result, max_column_diameter_m: float) -> str:
     width, height = 560, 360
-    water_y = 206
-    keel_y = 298
-    draft_px = keel_y - water_y
-    col_height_px = max(155.0, draft_px * result.column_height_m / max(result.draft_m, 1.0))
+    water_y = 202
+    keel_y = 304
+    available_height = 220.0
+    col_scale = available_height / max(result.column_height_m, 1.0)
+    col_height_px = result.column_height_m * col_scale
+    draft_px = result.draft_m * col_scale
+    freeboard_px = max(0.0, col_height_px - draft_px)
     top_y = keel_y - col_height_px
+    water_y = keel_y - draft_px
     col_w = max(30.0, min(72.0, result.column_diameter_m * 4.0))
     spacing_px = min(330.0, max(190.0, result.column_spacing_m * 3.0))
     x1, x2 = width / 2 - spacing_px / 2, width / 2 + spacing_px / 2
@@ -103,15 +105,21 @@ def platform_side_svg(result, max_column_diameter_m: float) -> str:
         .bg {{ fill:#ffffff; }}
         .waterline {{ stroke:#111827; stroke-width:1; }}
         .column {{ fill:{fill}; stroke:#b91c1c; stroke-width:2; filter:url(#shadow); }}
+        .dry {{ fill:#ffffff; stroke:#84cc16; stroke-width:4; }}
         .pontoon {{ fill:{fill}; stroke:#b91c1c; stroke-width:2; filter:url(#shadow); }}
         .dim {{ stroke:#111827; stroke-width:1; marker-start:url(#arrow); marker-end:url(#arrow); }}
+        .green {{ stroke:#84cc16; stroke-width:4; marker-start:url(#greenarrow); marker-end:url(#greenarrow); }}
         .thin {{ stroke:#111827; stroke-width:1; fill:none; }}
         .label {{ font: 13px system-ui, sans-serif; fill:#111827; }}
+        .greenlabel {{ font: 14px system-ui, sans-serif; fill:#65a30d; font-weight:600; }}
         .small {{ font: 12px system-ui, sans-serif; fill:#334155; }}
       </style>
       <defs>
         <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
           <path d="M0,0 L8,4 L0,8 z" fill="#111827" />
+        </marker>
+        <marker id="greenarrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" fill="#84cc16" />
         </marker>
         <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
           <feDropShadow dx="4" dy="5" stdDeviation="3" flood-color="#000000" flood-opacity="0.20" />
@@ -120,8 +128,12 @@ def platform_side_svg(result, max_column_diameter_m: float) -> str:
       <rect class="bg" x="0" y="0" width="{width}" height="{height}" />
       <line class="waterline" x1="48" y1="{water_y}" x2="{width-46}" y2="{water_y}" />
       <rect class="pontoon" x="{x1-col_w/2:.1f}" y="{keel_y-pontoon_h:.1f}" width="{x2-x1+col_w:.1f}" height="{pontoon_h}" rx="3" />
-      <rect class="column" x="{x1-col_w/2:.1f}" y="{water_y-8:.1f}" width="{col_w:.1f}" height="{draft_px+8:.1f}" rx="4" />
-      <rect class="column" x="{x2-col_w/2:.1f}" y="{water_y-8:.1f}" width="{col_w:.1f}" height="{draft_px+8:.1f}" rx="4" />
+      <rect class="column" x="{x1-col_w/2:.1f}" y="{water_y:.1f}" width="{col_w:.1f}" height="{draft_px:.1f}" rx="4" />
+      <rect class="column" x="{x2-col_w/2:.1f}" y="{water_y:.1f}" width="{col_w:.1f}" height="{draft_px:.1f}" rx="4" />
+      <rect class="dry" x="{x1-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{freeboard_px:.1f}" rx="4" />
+      <rect class="dry" x="{x2-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{freeboard_px:.1f}" rx="4" />
+      <line class="green" x1="{x1-col_w/2-42:.1f}" y1="{top_y:.1f}" x2="{x1-col_w/2-42:.1f}" y2="{keel_y:.1f}" />
+      <text class="greenlabel" x="{x1-col_w/2-105:.1f}" y="{(top_y+keel_y)/2+4:.1f}">{result.column_height_m:.1f} m total</text>
       <line class="dim" x1="{x1:.1f}" y1="{keel_y+28:.1f}" x2="{x2:.1f}" y2="{keel_y+28:.1f}" />
       <text class="label" x="{width/2-28:.1f}" y="{keel_y+45:.1f}">{result.column_spacing_m:.1f} m</text>
       <line class="dim" x1="{x2+42:.1f}" y1="{water_y:.1f}" x2="{x2+42:.1f}" y2="{keel_y:.1f}" />
@@ -170,20 +182,6 @@ st.title("Floating Wind Foundation CAPEX Optimizer v0.5")
 st.caption("A concept-screening optimizer for non-experts: choose turbine size, then optimize foundation CAPEX excluding WTG supply cost.")
 
 with st.sidebar:
-    st.header("Turbine")
-    turbine_mw = st.slider("WTG capacity [MW]", 8.0, 20.0, 15.0, 1.0)
-    turbine_props = turbine_from_capacity(turbine_mw)
-    st.caption(
-        f"Uses table data: rotor {turbine_props['rotor_diameter_m']:.0f} m, "
-        f"mass {turbine_props['mass_t']:.0f} t, thrust {turbine_props['thrust_mn']:.2f} MN."
-    )
-
-    st.header("Site")
-    water_depth_m = st.number_input("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
-    hs_m = st.number_input("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
-    tp_s = st.number_input("Peak period Tp [s]", 4.0, 25.0, 12.0, 0.5)
-    port_draft_limit_m = st.number_input("Port / tow-out draft limit [m]", 5.0, 80.0, 25.0, 1.0)
-
     st.header("Minimize Foundation CAPEX")
     optimize_draft = st.toggle("Optimize draft", value=True)
     if optimize_draft:
@@ -199,10 +197,30 @@ with st.sidebar:
 
     optimize_offset = st.toggle("Optimize offset limit", value=True)
     if optimize_offset:
+        offset_limit_mode = "optimize"
+        manual_allowable_offset_m = 10.0
+    else:
+        offset_limit_mode = "manual"
+        manual_allowable_offset_m = st.slider("Offset limit [m]", 2.0, 120.0, 10.0, 1.0)
+
+    st.header("Turbine")
+    turbine_mw = st.slider("WTG capacity [MW]", 8.0, 20.0, 15.0, 1.0)
+    turbine_props = turbine_from_capacity(turbine_mw)
+    st.caption(
+        f"Uses table data: rotor {turbine_props['rotor_diameter_m']:.0f} m, "
+        f"mass {turbine_props['mass_t']:.0f} t, thrust {turbine_props['thrust_mn']:.2f} MN."
+    )
+
+    st.header("Site")
+    water_depth_m = st.number_input("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
+    hs_m = st.number_input("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
+    tp_s = st.number_input("Peak period Tp [s]", 4.0, 25.0, 12.0, 0.5)
+    port_draft_limit_m = st.number_input("Port / tow-out draft limit [m]", 5.0, 80.0, 25.0, 1.0)
+
+    if offset_limit_mode == "optimize":
         allowable_offset_m = water_depth_m * 0.05
     else:
-        max_offset_slider = max(5.0, min(120.0, water_depth_m * 0.12))
-        allowable_offset_m = st.slider("Offset limit [m]", 2.0, max_offset_slider, min(10.0, max_offset_slider), 1.0)
+        allowable_offset_m = min(manual_allowable_offset_m, water_depth_m * 0.50)
     allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
 
     st.header("Constraints")
