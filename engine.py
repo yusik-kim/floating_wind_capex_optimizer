@@ -62,7 +62,6 @@ class DesignInputs:
     port_draft_limit_m: float
     gm_min_m: float = 2.0
     allowable_pitch_deg: float = 8.0
-    restoring_ratio_min: float = 1.3
     mooring_line_count: int = 3
     mooring_utilization_limit: float = 0.45
     allowable_offset_pct_depth: float = 5.0
@@ -157,7 +156,6 @@ def design_inputs_from_turbine(
     port_draft_limit_m: float,
     gm_min_m: float = 2.0,
     allowable_pitch_deg: float = 8.0,
-    restoring_ratio_min: float = 1.3,
     mooring_line_count: int = 3,
     mooring_utilization_limit: float = 0.45,
     allowable_offset_pct_depth: float = 5.0,
@@ -180,7 +178,6 @@ def design_inputs_from_turbine(
         port_draft_limit_m=port_draft_limit_m,
         gm_min_m=gm_min_m,
         allowable_pitch_deg=allowable_pitch_deg,
-        restoring_ratio_min=restoring_ratio_min,
         mooring_line_count=mooring_line_count,
         mooring_utilization_limit=mooring_utilization_limit,
         allowable_offset_pct_depth=allowable_offset_pct_depth,
@@ -196,6 +193,26 @@ def _component_volumes(n: int, col_dia: float, spacing: float, pontoon_w: float,
     # three pontoons forming a triangular ring; first-order screening only
     pontoon_vol = n * spacing * pontoon_w * pontoon_h
     return column_vol, pontoon_vol
+
+
+def _structural_mass_from_geometry(
+    template: SemiSubTemplate,
+    col_dia: float,
+    spacing: float,
+    col_height: float,
+    pontoon_w: float,
+    pontoon_h: float,
+) -> float:
+    """Estimate steel mass from a simple wetted-surface / member-size proxy."""
+    ref_proxy = (
+        template.n_columns * math.pi * template.column_diameter_m * template.column_height_m
+        + template.n_columns * template.column_spacing_m * 2.0 * (template.pontoon_width_m + template.pontoon_height_m)
+    )
+    proxy = (
+        template.n_columns * math.pi * col_dia * col_height
+        + template.n_columns * spacing * 2.0 * (pontoon_w + pontoon_h)
+    )
+    return template.structural_mass_t * (proxy / max(ref_proxy, 1e-6)) ** 1.08
 
 
 def _waterplane_inertia(n: int, col_dia: float, spacing: float) -> float:
@@ -230,14 +247,15 @@ def _mooring_screen(
     selected_stiffness = 0.0
     selected_mbl = 0.0
 
-    for diameter in [76, 84, 92, 102, 114, 127, 140, 152, 162, 177, 190, 203, 220]:
+    for diameter in [76, 84, 92, 102, 114, 127, 140, 152, 162, 177, 190, 203, 220, 240, 260]:
         mbl_mn = 0.00055 * diameter**2
         line_stiffness = 0.000018 * diameter**2 / depth_factor
         total_stiffness = line_count * line_stiffness * spacing_factor
+        utilization = environmental_force * inputs.mooring_safety_factor / max(line_count * mbl_mn, 1e-6)
         selected_diameter = float(diameter)
         selected_stiffness = total_stiffness
         selected_mbl = mbl_mn
-        if total_stiffness >= required_stiffness:
+        if total_stiffness >= required_stiffness and utilization <= inputs.mooring_utilization_limit:
             break
 
     offset = environmental_force / max(selected_stiffness, 1e-6)
@@ -258,7 +276,7 @@ def _mooring_screen(
 
     offset_pass = offset <= allowable_offset
     utilization = environmental_force * inputs.mooring_safety_factor / max(line_count * selected_mbl, 1e-6)
-    mooring_pass = utilization <= inputs.mooring_utilization_limit
+    mooring_pass = utilization <= inputs.mooring_utilization_limit and selected_stiffness >= required_stiffness
 
     return {
         "environmental_force_mn": environmental_force,
@@ -308,7 +326,6 @@ def _constraint_margins_from_inputs(inputs: DesignInputs, result: SemiSubResult)
         "column diameter": result.column_diameter_m / max(inputs.max_column_diameter_m, 1e-6),
         "GM": inputs.gm_min_m / max(result.gm_m, 1e-6),
         "pitch / heel": result.static_heel_deg / max(inputs.allowable_pitch_deg, 1e-6),
-        "restoring ratio": inputs.restoring_ratio_min / max(result.restoring_ratio, 1e-6),
         "port draft": result.draft_m / max(inputs.port_draft_limit_m, 1e-6),
         "ballast positive": ballast_positive,
         "ballast fraction": ballast_upper,
@@ -333,125 +350,155 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
     thrust_scale = max(0.85, (inputs.max_thrust_mn / 2.5) ** 0.25)  # soft correction
     s = max(0.65, min(1.45, 0.75 * length_scale + 0.25 * thrust_scale))
 
-    best = None
-    draft_mults = [0.90, 1.00, 1.10, 1.20, 1.30]
-    if inputs.target_draft_m is not None:
-        draft_mults = [max(0.55, min(1.60, inputs.target_draft_m / max(template.draft_m * s, 1e-6)))]
-
     feasible_best = None
     diagnostic_best = None
+    freeboard = max(2.0, (template.column_height_m - template.draft_m) * s)
+    base_col_dia = template.column_diameter_m * s
+    base_spacing = template.column_spacing_m * s
+    base_draft = template.draft_m * s
+    base_pont_w = template.pontoon_width_m * s
+    base_pont_h = template.pontoon_height_m * s
 
-    # Iterate over stability scale and draft to meet constraints, then minimize CAPEX among feasible designs.
-    for geom_mult in [0.90, 1.00, 1.05, 1.10, 1.15, 1.20, 1.30, 1.40, 1.55, 1.70, 1.90, 2.10, 2.35, 2.60]:
-        for draft_mult in draft_mults:
-            col_dia = template.column_diameter_m * s * geom_mult
-            spacing = template.column_spacing_m * s * geom_mult
-            freeboard = max(2.0, (template.column_height_m - template.draft_m) * s)
-            pont_w = template.pontoon_width_m * s * geom_mult
-            pont_h = template.pontoon_height_m * s * min(1.2, draft_mult)
-            draft = template.draft_m * s * draft_mult
-            col_height = draft + freeboard
-            structural_mass = template.structural_mass_t * (s ** 2.55) * (geom_mult ** 2.2) * (0.90 + 0.10 * draft / max(template.draft_m * s, 1e-6))
+    col_dia_values = sorted({
+        round(max(5.0, base_col_dia * m), 3)
+        for m in [0.75, 0.85, 0.95, 1.05, 1.15, 1.30, 1.45]
+    })
+    spacing_values = sorted({
+        round(max(35.0, base_spacing * m), 3)
+        for m in [0.75, 0.90, 1.00, 1.15, 1.30, 1.50, 1.70, 1.90]
+    })
+    if inputs.target_draft_m is not None:
+        draft_values = [inputs.target_draft_m]
+    else:
+        draft_values = sorted({
+            round(max(8.0, base_draft * m), 3)
+            for m in [0.65, 0.75, 0.85, 0.95, 1.05, 1.15, 1.30, 1.45]
+        })
+    pont_w_values = sorted({
+        round(max(5.0, base_pont_w * m), 3)
+        for m in [0.75, 0.90, 1.05, 1.20, 1.40]
+    })
+    pont_h_values = sorted({
+        round(max(4.0, base_pont_h * m), 3)
+        for m in [0.75, 0.90, 1.05, 1.20, 1.40]
+    })
 
-            col_vol, pont_vol = _component_volumes(template.n_columns, col_dia, spacing, pont_w, pont_h, draft)
-            total_vol = col_vol + pont_vol
-            buoyancy_t = total_vol * RHO_SEAWATER_T_PER_M3
-            lightship_t = structural_mass + inputs.wtg_mass_t
-            ballast_t = buoyancy_t - lightship_t
-            total_mass_t = lightship_t + max(0.0, ballast_t)
+    # Minimize CAPEX over explicit geometry variables:
+    # column spacing, column diameter, draft, pontoon width, and pontoon height.
+    for col_dia in col_dia_values:
+        for spacing in spacing_values:
+            for draft in draft_values:
+                for pont_w in pont_w_values:
+                    for pont_h in pont_h_values:
+                        col_height = draft + freeboard
+                        structural_mass = _structural_mass_from_geometry(
+                            template,
+                            col_dia,
+                            spacing,
+                            col_height,
+                            pont_w,
+                            pont_h,
+                        )
 
-            # Buoyancy centre: pontoons at pont_h/2, columns at draft/2
-            kb = (col_vol * (draft / 2.0) + pont_vol * (pont_h / 2.0)) / max(total_vol, 1e-6)
-            iwp = _waterplane_inertia(template.n_columns, col_dia, spacing)
-            bm = iwp / max(total_vol, 1e-6)
+                        col_vol, pont_vol = _component_volumes(template.n_columns, col_dia, spacing, pont_w, pont_h, draft)
+                        total_vol = col_vol + pont_vol
+                        buoyancy_t = total_vol * RHO_SEAWATER_T_PER_M3
+                        lightship_t = structural_mass + inputs.wtg_mass_t
+                        ballast_t = buoyancy_t - lightship_t
+                        total_mass_t = lightship_t + max(0.0, ballast_t)
 
-            # Mass centre: structural, WTG, ballast. Ballast assumed low in pontoon region.
-            structural_cog = min(template.structural_cog_above_keel_m * s * draft_mult, draft * 0.75)
-            ballast_cog = pont_h * 0.45
-            kg_num = structural_mass * structural_cog + inputs.wtg_mass_t * inputs.wtg_cog_above_keel_m + max(0.0, ballast_t) * ballast_cog
-            kg = kg_num / max(total_mass_t, 1e-6)
-            gm = kb + bm - kg
+                        # Buoyancy centre: pontoons at pont_h/2, columns at draft/2
+                        kb = (col_vol * (draft / 2.0) + pont_vol * (pont_h / 2.0)) / max(total_vol, 1e-6)
+                        iwp = _waterplane_inertia(template.n_columns, col_dia, spacing)
+                        bm = iwp / max(total_vol, 1e-6)
 
-            lever = max(1.0, inputs.hub_height_above_keel_m - kb)
-            heeling = inputs.max_thrust_mn * lever
-            theta = math.radians(inputs.allowable_pitch_deg)
-            restoring = (buoyancy_t * G / 1000.0) * gm * math.sin(theta) if gm > 0 else -1.0
-            ratio = restoring / heeling if heeling > 0 else 0.0
-            heel_rad = heeling / max((buoyancy_t * G / 1000.0) * gm, 1e-9) if gm > 0 else math.inf
-            static_heel = math.degrees(heel_rad) if heel_rad < 10 else 999.0
+                        # Mass centre: structural, WTG, ballast. Ballast assumed low in pontoon region.
+                        structural_cog = min(0.45 * col_height, draft * 0.80)
+                        ballast_cog = pont_h * 0.45
+                        kg_num = structural_mass * structural_cog + inputs.wtg_mass_t * inputs.wtg_cog_above_keel_m + max(0.0, ballast_t) * ballast_cog
+                        kg = kg_num / max(total_mass_t, 1e-6)
+                        gm = kb + bm - kg
 
-            gm_pass = gm >= inputs.gm_min_m
-            stability_pass = ratio >= inputs.restoring_ratio_min and static_heel <= inputs.allowable_pitch_deg
-            port_pass = draft <= inputs.port_draft_limit_m
-            ballast_pass = ballast_t > 0 and ballast_t < 0.75 * buoyancy_t
-            column_diameter_pass = col_dia <= inputs.max_column_diameter_m
-            mooring = _mooring_screen(inputs, col_dia, spacing, draft)
-            offset_pass = mooring["offset_pass"]
-            mooring_pass = mooring["mooring_pass"]
-            capex = _capex_breakdown(inputs, structural_mass, ballast_t, mooring["mooring_cost_musd"])
-            overall = gm_pass and stability_pass and port_pass and ballast_pass and column_diameter_pass and offset_pass and mooring_pass
-            result = SemiSubResult(
-                template=template.name,
-                turbine_mw=inputs.turbine_mw,
-                allowable_pitch_deg=inputs.allowable_pitch_deg,
-                allowable_offset_pct_depth=inputs.allowable_offset_pct_depth,
-                column_diameter_m=col_dia,
-                column_spacing_m=spacing,
-                column_height_m=col_height,
-                pontoon_width_m=pont_w,
-                pontoon_height_m=pont_h,
-                draft_m=draft,
-                structural_mass_t=structural_mass,
-                displacement_t=buoyancy_t,
-                buoyancy_t=buoyancy_t,
-                ballast_t=ballast_t,
-                total_mass_t=total_mass_t,
-                kb_m=kb,
-                bm_m=bm,
-                kg_m=kg,
-                gm_m=gm,
-                heeling_moment_mnm=heeling,
-                restoring_moment_mnm=restoring,
-                restoring_ratio=ratio,
-                static_heel_deg=static_heel,
-                environmental_force_mn=mooring["environmental_force_mn"],
-                wave_drift_force_mn=mooring["wave_drift_force_mn"],
-                allowable_offset_m=mooring["allowable_offset_m"],
-                mooring_required_stiffness_mn_per_m=mooring["mooring_required_stiffness_mn_per_m"],
-                mooring_stiffness_mn_per_m=mooring["mooring_stiffness_mn_per_m"],
-                offset_m=mooring["offset_m"],
-                offset_pct_depth=mooring["offset_pct_depth"],
-                mooring_line_diameter_mm=mooring["mooring_line_diameter_mm"],
-                mooring_line_length_m=mooring["mooring_line_length_m"],
-                mooring_pretension_t_per_line=mooring["mooring_pretension_t_per_line"],
-                mooring_mass_t=mooring["mooring_mass_t"],
-                mooring_cost_musd=mooring["mooring_cost_musd"],
-                platform_capex_musd=capex["platform_capex_musd"],
-                wtg_capex_musd=capex["wtg_capex_musd"],
-                foundation_capex_musd=capex["foundation_capex_musd"],
-                balance_of_plant_musd=capex["balance_of_plant_musd"],
-                installation_capex_musd=capex["installation_capex_musd"],
-                total_capex_musd=capex["total_capex_musd"],
-                capex_per_mw_musd=capex["capex_per_mw_musd"],
-                gm_pass=gm_pass,
-                stability_pass=stability_pass,
-                port_pass=port_pass,
-                ballast_pass=ballast_pass,
-                column_diameter_pass=column_diameter_pass,
-                offset_pass=offset_pass,
-                mooring_pass=mooring_pass,
-                overall_pass=overall,
-                notes="Concept-level estimate. Geometry and mooring are generated from generic semi-sub and catenary-screening correlations."
-            )
-            if overall:
-                if feasible_best is None or result.total_capex_musd < feasible_best.total_capex_musd:
-                    feasible_best = result
-            else:
-                margins = _constraint_margins_from_inputs(inputs, result)
-                violation = sum(max(0.0, margin - 1.0) ** 2 for margin in margins.values())
-                diagnostic_key = (violation, result.total_capex_musd)
-                if diagnostic_best is None or diagnostic_key < diagnostic_best[0]:
-                    diagnostic_best = (diagnostic_key, result)
+                        lever = max(1.0, inputs.hub_height_above_keel_m - kb)
+                        heeling = inputs.max_thrust_mn * lever
+                        theta = math.radians(inputs.allowable_pitch_deg)
+                        restoring = (buoyancy_t * G / 1000.0) * gm * math.sin(theta) if gm > 0 else -1.0
+                        ratio = restoring / heeling if heeling > 0 else 0.0
+                        heel_rad = heeling / max((buoyancy_t * G / 1000.0) * gm, 1e-9) if gm > 0 else math.inf
+                        static_heel = math.degrees(heel_rad) if heel_rad < 10 else 999.0
+
+                        gm_pass = gm >= inputs.gm_min_m
+                        stability_pass = static_heel <= inputs.allowable_pitch_deg
+                        port_pass = draft <= inputs.port_draft_limit_m
+                        ballast_pass = ballast_t > 0 and ballast_t < 0.75 * buoyancy_t
+                        column_diameter_pass = col_dia <= inputs.max_column_diameter_m
+                        mooring = _mooring_screen(inputs, col_dia, spacing, draft)
+                        offset_pass = mooring["offset_pass"]
+                        mooring_pass = mooring["mooring_pass"]
+                        capex = _capex_breakdown(inputs, structural_mass, ballast_t, mooring["mooring_cost_musd"])
+                        overall = gm_pass and stability_pass and port_pass and ballast_pass and column_diameter_pass and offset_pass and mooring_pass
+                        result = SemiSubResult(
+                            template=template.name,
+                            turbine_mw=inputs.turbine_mw,
+                            allowable_pitch_deg=inputs.allowable_pitch_deg,
+                            allowable_offset_pct_depth=inputs.allowable_offset_pct_depth,
+                            column_diameter_m=col_dia,
+                            column_spacing_m=spacing,
+                            column_height_m=col_height,
+                            pontoon_width_m=pont_w,
+                            pontoon_height_m=pont_h,
+                            draft_m=draft,
+                            structural_mass_t=structural_mass,
+                            displacement_t=buoyancy_t,
+                            buoyancy_t=buoyancy_t,
+                            ballast_t=ballast_t,
+                            total_mass_t=total_mass_t,
+                            kb_m=kb,
+                            bm_m=bm,
+                            kg_m=kg,
+                            gm_m=gm,
+                            heeling_moment_mnm=heeling,
+                            restoring_moment_mnm=restoring,
+                            restoring_ratio=ratio,
+                            static_heel_deg=static_heel,
+                            environmental_force_mn=mooring["environmental_force_mn"],
+                            wave_drift_force_mn=mooring["wave_drift_force_mn"],
+                            allowable_offset_m=mooring["allowable_offset_m"],
+                            mooring_required_stiffness_mn_per_m=mooring["mooring_required_stiffness_mn_per_m"],
+                            mooring_stiffness_mn_per_m=mooring["mooring_stiffness_mn_per_m"],
+                            offset_m=mooring["offset_m"],
+                            offset_pct_depth=mooring["offset_pct_depth"],
+                            mooring_line_diameter_mm=mooring["mooring_line_diameter_mm"],
+                            mooring_line_length_m=mooring["mooring_line_length_m"],
+                            mooring_pretension_t_per_line=mooring["mooring_pretension_t_per_line"],
+                            mooring_mass_t=mooring["mooring_mass_t"],
+                            mooring_cost_musd=mooring["mooring_cost_musd"],
+                            platform_capex_musd=capex["platform_capex_musd"],
+                            wtg_capex_musd=capex["wtg_capex_musd"],
+                            foundation_capex_musd=capex["foundation_capex_musd"],
+                            balance_of_plant_musd=capex["balance_of_plant_musd"],
+                            installation_capex_musd=capex["installation_capex_musd"],
+                            total_capex_musd=capex["total_capex_musd"],
+                            capex_per_mw_musd=capex["capex_per_mw_musd"],
+                            gm_pass=gm_pass,
+                            stability_pass=stability_pass,
+                            port_pass=port_pass,
+                            ballast_pass=ballast_pass,
+                            column_diameter_pass=column_diameter_pass,
+                            offset_pass=offset_pass,
+                            mooring_pass=mooring_pass,
+                            overall_pass=overall,
+                            notes="Concept-level estimate. Geometry and mooring are generated from generic semi-sub and catenary-screening correlations.",
+                        )
+                        if overall:
+                            if feasible_best is None or result.total_capex_musd < feasible_best.total_capex_musd:
+                                feasible_best = result
+                        else:
+                            margins = _constraint_margins_from_inputs(inputs, result)
+                            violation = sum(max(0.0, margin - 1.0) ** 2 for margin in margins.values())
+                            diagnostic_key = (violation, result.total_capex_musd)
+                            if diagnostic_best is None or diagnostic_key < diagnostic_best[0]:
+                                diagnostic_best = (diagnostic_key, result)
 
     if feasible_best is not None:
         return feasible_best

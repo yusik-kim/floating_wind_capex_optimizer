@@ -22,7 +22,6 @@ The primary user-controlled variables are:
 | Variable | Meaning |
 | --- | --- |
 | `turbine_mw` | Wind turbine generator rated capacity |
-| `target_draft_m` | Target platform draft, if manual draft control is used |
 | `allowable_pitch_deg` | Allowable static pitch / heel angle |
 | `allowable_offset_pct_depth` | Allowable horizontal offset. The UI presents this in meters and converts it internally to percent of water depth |
 | `water_depth_m` | Site water depth |
@@ -34,7 +33,7 @@ The primary user-controlled variables are:
 In the app, the sidebar is intentionally ordered as:
 
 ```text
-Constraint -> Turbine -> Site -> Minimize Foundation CAPEX
+Constraint -> Turbine -> Site
 ```
 
 The constraint values are sliders so users can explore how relaxing or tightening a requirement changes the feasible design and foundation CAPEX. The default slider positions represent the current screening limits used by the optimizer.
@@ -44,7 +43,6 @@ The current implementation also uses internal default assumptions for hidden adv
 | Internal assumption | Default |
 | --- | ---: |
 | `tp_s` | 12 s |
-| `restoring_ratio_min` | 1.3 |
 | `mooring_line_count` | 3 |
 | `mooring_safety_factor` | 1.5 |
 | `mooring_cost_multiplier` | 1.0 |
@@ -139,63 +137,73 @@ This prevents unrealistically small or large platforms when users select small o
 
 ## 6. Geometry Candidate Search
 
-The function searches a set of geometry multipliers:
+The optimizer now varies explicit foundation design variables rather than a single geometry multiplier. The design variables are:
 
 ```text
-geom_mult = [1.00, 1.05, 1.10, 1.15, 1.20, 1.30, 1.40, 1.55, 1.70, 1.90, 2.10]
+column_spacing
+column_diameter
+draft
+pontoon_width
+pontoon_height
 ```
 
-If draft is optimized, it searches draft multipliers:
+The turbine-based scale `s` is used only to define a reasonable search center around the 15 MW reference template:
 
 ```text
-draft_mult = [0.90, 1.00, 1.10, 1.20, 1.30]
+base_column_diameter = reference_column_diameter * s
+base_column_spacing  = reference_column_spacing  * s
+base_draft           = reference_draft           * s
+base_pontoon_width   = reference_pontoon_width   * s
+base_pontoon_height  = reference_pontoon_height  * s
 ```
 
-If the user manually sets draft, the code converts the requested draft into an equivalent draft multiplier:
+The search then explores discrete candidate values around those base dimensions. For example:
 
 ```text
-draft_mult = target_draft / (reference_draft * s)
+column_diameter = base_column_diameter * diameter_multiplier
+column_spacing  = base_column_spacing  * spacing_multiplier
+draft           = base_draft           * draft_multiplier
+pontoon_width   = base_pontoon_width   * pontoon_width_multiplier
+pontoon_height  = base_pontoon_height  * pontoon_height_multiplier
 ```
 
-and clamps it:
+Column total height is set from draft plus a fixed scaled freeboard:
 
 ```text
-draft_mult = clamp(draft_mult, 0.55, 1.60)
+freeboard = max(2.0, (reference_column_height - reference_draft) * s)
+column_height = draft + freeboard
 ```
 
-For each candidate, the geometry is:
-
-```text
-column_diameter = reference_column_diameter * s * geom_mult
-column_spacing  = reference_column_spacing  * s * geom_mult
-column_height   = reference_column_height   * s * max(1.0, draft_mult)
-pontoon_width   = reference_pontoon_width   * s * geom_mult
-pontoon_height  = reference_pontoon_height  * s * min(1.2, draft_mult)
-```
-
-Draft is limited by column height:
-
-```text
-draft = min(0.85 * column_height, reference_draft * s * draft_mult)
-```
+This means reducing draft also reduces total column height and steel cost. The dry column above still exists for freeboard, but it does not grow artificially when draft is reduced.
 
 ## 7. Structural Mass Estimate
 
-Structural mass is scaled from the reference platform:
+Structural mass is estimated from a simple geometry proxy based on column shell area and pontoon member size.
+
+```text
+reference_proxy =
+    n_columns * pi * reference_column_diameter * reference_column_height
+    + n_columns * reference_spacing * 2 * (reference_pontoon_width + reference_pontoon_height)
+```
+
+```text
+candidate_proxy =
+    n_columns * pi * column_diameter * column_height
+    + n_columns * column_spacing * 2 * (pontoon_width + pontoon_height)
+```
 
 ```text
 structural_mass =
     reference_structural_mass
-    * s^2.55
-    * geom_mult^2.2
-    * (0.95 + 0.1 * draft_mult)
+    * (candidate_proxy / reference_proxy)^1.08
 ```
 
 Interpretation:
 
-- `s^2.55` approximates structural scaling between area and volume scaling.
-- `geom_mult^2.2` penalizes larger stability geometry.
-- `(0.95 + 0.1 * draft_mult)` adds a modest draft-related mass correction.
+- larger column diameter and height increase column steel
+- larger column spacing increases pontoon length
+- larger pontoon width and height increase pontoon steel
+- the exponent `1.08` adds a mild allowance for larger member sizes and outfitting
 
 This is a concept estimate only. It does not include scantlings, fatigue reinforcement, local buckling, fabrication details, or detailed secondary steel.
 
@@ -325,10 +333,10 @@ BM = I_wp / total_volume
 
 ## 12. Center of Gravity
 
-The platform structural CoG is scaled but limited so it does not exceed 75% of draft:
+The platform structural CoG is estimated from the candidate column height, but limited so it remains below the main submerged body:
 
 ```text
-structural_cog = min(reference_structural_cog * s * draft_mult, 0.75 * draft)
+structural_cog = min(0.45 * column_height, 0.80 * draft)
 ```
 
 Ballast is assumed low in the pontoon region:
@@ -408,11 +416,7 @@ The restoring-to-heeling ratio is:
 restoring_ratio = restoring_moment / heeling_moment
 ```
 
-The stability ratio criterion is:
-
-```text
-restoring_ratio >= restoring_ratio_min
-```
+The ratio is reported as an engineering diagnostic. It is not a separate optimization constraint in the current app; feasibility is governed by the static heel angle, GM, draft, column diameter, ballast, offset, and mooring utilization constraints.
 
 ## 16. Static Heel Angle
 
@@ -732,7 +736,7 @@ wtg_capex =
 
 but it is not included in the optimization objective. All CAPEX outputs are in million USD.
 
-## 23. Constraint Checks
+## 23. Feasibility Constraints
 
 The following Boolean checks are calculated:
 
@@ -741,9 +745,7 @@ gm_pass = GM >= gm_min
 ```
 
 ```text
-stability_pass =
-    restoring_ratio >= restoring_ratio_min
-    and static_heel_deg <= allowable_pitch_deg
+stability_pass = static_heel_deg <= allowable_pitch_deg
 ```
 
 ```text
@@ -769,6 +771,7 @@ offset_pass =
 ```text
 mooring_pass =
     utilization <= mooring_utilization_limit
+    and selected_stiffness >= required_stiffness
 ```
 
 Overall feasibility is:
@@ -799,7 +802,7 @@ minimize foundation_capex
 subject to overall_pass = True
 ```
 
-This means a lower-cost candidate is not allowed to win if it violates GM, pitch, restoring ratio, draft, ballast, column diameter, offset, or mooring strength constraints.
+This means a lower-cost candidate is not allowed to win if it violates GM, pitch, draft, ballast, column diameter, offset, or mooring constraints.
 
 If no feasible candidate exists in the searched geometry range, the function returns a diagnostic candidate. This fallback is not called a feasible optimum. It is selected by the smallest physical violation margin so the UI can explain which constraint is blocking feasibility.
 
@@ -819,17 +822,19 @@ A margin below or equal to 1.0 satisfies the constraint. A margin above 1.0 viol
 
 ## 25. CAPEX Optimization in `optimize_capex`
 
-The top-level optimizer searches optional foundation design variables:
+The top-level optimizer searches foundation design variables:
 
-| Variable | Candidate values |
+| Design variable | Role |
 | --- | --- |
-| Draft | 14, 16, 18, 20, 22, 25, 28 m |
-| Pitch limit | 5, 6, 7, 8, 10 deg |
-| Offset limit | 3, 4, 5, 6, 8% water depth |
+| Column spacing | Hydrostatic restoring and pontoon length |
+| Column diameter | Buoyancy, waterplane area, and fabrication constraint |
+| Draft | Displacement and port constraint |
+| Pontoon width | Submerged volume and steel mass |
+| Pontoon height | Submerged volume, ballast location, and steel mass |
 
 WTG capacity is selected by the user and is not optimized. The selected WTG capacity is still used to derive rotor diameter, mass, CoG and maximum thrust from the WTG table.
 
-If a foundation variable is not optimized, the user-selected value is used instead.
+Pitch limit, offset limit, draft limit, GM, column diameter limit, and mooring utilization limit are project constraints. The user can change these constraints with sidebar sliders, but the optimizer does not treat them as design variables.
 
 For each candidate combination:
 

@@ -6,7 +6,6 @@ import streamlit as st
 from engine import (
     TURBINE_LIBRARY,
     design_inputs_from_turbine,
-    evaluate_semisub,
     optimize_capex,
     result_as_dict,
     turbine_from_capacity,
@@ -43,7 +42,7 @@ def failed_constraints(result) -> list[str]:
     return [name for name, passed in checks if not passed]
 
 
-def constraint_margins_for_ui(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit):
+def constraint_margins_for_ui(result, gm_min_m, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit):
     mooring_mbl = 0.00055 * result.mooring_line_diameter_mm**2
     mooring_utilization = result.environmental_force_mn * mooring_safety_factor / max(mooring_line_count * mooring_mbl, 1e-6)
     ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
@@ -51,7 +50,6 @@ def constraint_margins_for_ui(result, gm_min_m, restoring_ratio_min, port_draft_
         "column diameter": (result.column_diameter_m / max(max_column_diameter_m, 1e-6), f"increase max column diameter above {result.column_diameter_m:.1f} m"),
         "GM": (gm_min_m / max(result.gm_m, 1e-6), f"reduce minimum GM below {result.gm_m:.2f} m or allow larger geometry"),
         "pitch / heel": (result.static_heel_deg / max(result.allowable_pitch_deg, 1e-6), f"increase pitch limit above {result.static_heel_deg:.1f} deg or allow larger geometry"),
-        "restoring ratio": (restoring_ratio_min / max(result.restoring_ratio, 1e-6), f"reduce restoring ratio below {result.restoring_ratio:.2f} or allow larger geometry"),
         "port draft": (result.draft_m / max(port_draft_limit_m, 1e-6), f"increase port draft limit above {result.draft_m:.1f} m"),
         "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
         "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
@@ -60,11 +58,10 @@ def constraint_margins_for_ui(result, gm_min_m, restoring_ratio_min, port_draft_
     }
 
 
-def most_restrictive_message(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit) -> str:
+def most_restrictive_message(result, gm_min_m, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit) -> str:
     margins = constraint_margins_for_ui(
         result,
         gm_min_m,
-        restoring_ratio_min,
         port_draft_limit_m,
         max_column_diameter_m,
         mooring_line_count,
@@ -249,18 +246,10 @@ with st.sidebar:
     allowable_offset_m = min(allowable_offset_m, water_depth_m * 0.50)
     allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
 
-    st.header("Minimize Foundation CAPEX")
-    optimize_draft = st.toggle("Optimize draft", value=True)
-    if optimize_draft:
-        target_draft_m = 20.0
-    else:
-        max_manual_draft = max(14.0, min(28.0, port_draft_limit_m))
-        target_draft_m = st.slider("Draft [m]", 14.0, max_manual_draft, min(20.0, max_manual_draft), 1.0)
-
-    restoring_ratio_min = 1.3
     mooring_line_count = 3
     mooring_safety_factor = 1.5
     mooring_cost_multiplier = 1.0
+    target_draft_m = None
 
 base_inputs = design_inputs_from_turbine(
     turbine_mw=turbine_mw,
@@ -270,7 +259,6 @@ base_inputs = design_inputs_from_turbine(
     port_draft_limit_m=port_draft_limit_m,
     gm_min_m=gm_min_m,
     allowable_pitch_deg=allowable_pitch_deg,
-    restoring_ratio_min=restoring_ratio_min,
     mooring_line_count=mooring_line_count,
     mooring_utilization_limit=mooring_utilization_limit,
     allowable_offset_pct_depth=allowable_offset_pct_depth,
@@ -280,30 +268,23 @@ base_inputs = design_inputs_from_turbine(
     target_draft_m=target_draft_m,
 )
 
-optimized_result = optimize_capex(base_inputs, False, True, False, False)
-result = optimize_capex(base_inputs, False, optimize_draft, False, False)
-manual_result = evaluate_semisub(base_inputs)
-
-delta_musd = result.total_capex_musd - optimized_result.total_capex_musd
-delta_pct = 100.0 * delta_musd / max(optimized_result.total_capex_musd, 1e-6)
+optimized_result = optimize_capex(base_inputs, False, False, False, False)
+result = optimized_result
 status = "PASS" if result.overall_pass else "CHECK"
-selected_label = "Selected Foundation CAPEX" if result.overall_pass else "Best Available Foundation CAPEX"
-optimized_label = "Optimized Foundation CAPEX" if optimized_result.overall_pass else "Best Available Foundation CAPEX"
-delta_label = f"{money_musd(delta_musd)} vs feasible optimum" if optimized_result.overall_pass else "no feasible optimum"
+capex_label = "Optimized Foundation CAPEX" if result.overall_pass else "Best Available Foundation CAPEX"
 
 c1, c2, c3 = st.columns([1.2, 1, 1])
-c1.metric(selected_label, money_musd(result.total_capex_musd), delta_label)
-c2.metric(optimized_label, money_musd(optimized_result.total_capex_musd))
-c3.metric("CAPEX Delta", f"{delta_pct:.1f}%", status)
+c1.metric(capex_label, money_musd(result.total_capex_musd))
+c2.metric("Foundation CAPEX / MW", money_musd(result.capex_per_mw_musd))
+c3.metric("Feasibility", status)
 
-st.progress(min(1.0, max(0.0, result.total_capex_musd / max(optimized_result.total_capex_musd * 1.35, 1e-6))))
+st.progress(1.0 if result.overall_pass else 0.35)
 
-if not optimized_result.overall_pass:
-    blockers = ", ".join(failed_constraints(optimized_result))
+if not result.overall_pass:
+    blockers = ", ".join(failed_constraints(result))
     relax = most_restrictive_message(
-        optimized_result,
+        result,
         gm_min_m,
-        restoring_ratio_min,
         port_draft_limit_m,
         max_column_diameter_m,
         mooring_line_count,
@@ -314,24 +295,8 @@ if not optimized_result.overall_pass:
         "No feasible design was found within the current search range and constraints. "
         f"The displayed result is the closest diagnostic candidate, blocked by: {blockers}. {relax}"
     )
-elif not result.overall_pass:
-    blockers = ", ".join(failed_constraints(result))
-    relax = most_restrictive_message(
-        result,
-        gm_min_m,
-        restoring_ratio_min,
-        port_draft_limit_m,
-        max_column_diameter_m,
-        mooring_line_count,
-        mooring_safety_factor,
-        mooring_utilization_limit,
-    )
-    st.warning(
-        "The selected manual settings do not satisfy all constraints. "
-        f"Blocking checks: {blockers}. {relax}"
-    )
 
-st.subheader("Four Main Levers")
+st.subheader("Key Results")
 l1, l2, l3, l4 = st.columns(4)
 l1.metric("WTG capacity", compact_number(result.turbine_mw, "MW"))
 l2.metric("Draft", compact_number(result.draft_m, "m"), f"limit {port_draft_limit_m:.1f} m")
@@ -359,16 +324,17 @@ costs = pd.DataFrame(
 )
 st.dataframe(costs, hide_index=True, width="stretch")
 
-st.subheader("What Changed From Manual Inputs")
+st.subheader("Optimized Geometry")
 comparison = pd.DataFrame(
     [
-        ["WTG capacity", base_inputs.turbine_mw, result.turbine_mw, "MW"],
-        ["Draft", manual_result.draft_m, result.draft_m, "m"],
-        ["Pitch / heel", manual_result.static_heel_deg, result.static_heel_deg, "deg"],
-        ["Offset", manual_result.offset_m, result.offset_m, "m"],
-        ["Foundation CAPEX", manual_result.total_capex_musd, result.total_capex_musd, "USD million"],
+        ["Column spacing", result.column_spacing_m, "m"],
+        ["Column diameter", result.column_diameter_m, "m"],
+        ["Draft", result.draft_m, "m"],
+        ["Pontoon width", result.pontoon_width_m, "m"],
+        ["Pontoon height", result.pontoon_height_m, "m"],
+        ["Foundation CAPEX", result.total_capex_musd, "USD million"],
     ],
-    columns=["Lever", "Manual value", "Selected value", "Unit"],
+    columns=["Design variable", "Optimized value", "Unit"],
 )
 st.dataframe(comparison, hide_index=True, width="stretch")
 

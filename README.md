@@ -20,12 +20,23 @@ This is concept-level screening only. It is not suitable for certification or FE
 
 Module 5 uses generic catenary mooring correlations to estimate required horizontal stiffness, selected line size, pretension, offset, mooring mass and indicative mooring cost.
 
-Module 6 adds a "Minimize Foundation CAPEX" workflow. WTG capacity remains a user-selected sizing input, and WTG mass, CoG and thrust are taken from the built-in WTG table. WTG supply cost is shown separately but excluded from the optimization objective.
+Module 6 adds a foundation CAPEX optimization workflow. WTG capacity remains a user-selected sizing input, and WTG mass, CoG and thrust are taken from the built-in WTG table. WTG supply cost is shown separately but excluded from the optimization objective.
 
-The user can optimize or manually set three foundation design levers:
+The optimizer varies five foundation design variables:
 
-1. Draft
-2. Pitch / heel limit
+1. Column spacing
+2. Column diameter
+3. Draft
+4. Pontoon width
+5. Pontoon height
+
+The sidebar constraints remain fixed project inputs that the user can change with sliders:
+
+1. Pitch limit
+2. Port draft limit
 3. Offset limit
+4. Maximum column diameter
+5. Minimum GM
+6. Mooring allowable utilization
 
 All cost outputs are shown in USD. The app also includes dynamic top-view and side-view foundation sketches, and a maximum column diameter constraint set to 15 m by default.
