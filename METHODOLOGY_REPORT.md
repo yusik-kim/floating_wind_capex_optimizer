@@ -31,6 +31,14 @@ The primary user-controlled variables are:
 | `max_column_diameter_m` | Maximum allowed column diameter, default 15 m |
 | `mooring_utilization_limit` | Maximum allowable mooring strength utilization, default 0.45 |
 
+In the app, the sidebar is intentionally ordered as:
+
+```text
+Constraint -> Turbine -> Site -> Minimize Foundation CAPEX
+```
+
+The constraint values are sliders so users can explore how relaxing or tightening a requirement changes the feasible design and foundation CAPEX. The default slider positions represent the current screening limits used by the optimizer.
+
 The current implementation also uses internal default assumptions for hidden advanced parameters:
 
 | Internal assumption | Default |

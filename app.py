@@ -226,12 +226,13 @@ st.title("Floating Wind Foundation CAPEX Optimizer v0.5")
 st.caption("A concept-screening optimizer for non-experts: choose turbine size, then optimize foundation CAPEX excluding WTG supply cost.")
 
 with st.sidebar:
-    st.header("Minimize Foundation CAPEX")
-    optimize_draft = st.toggle("Optimize draft", value=True)
-    if optimize_draft:
-        target_draft_m = 20.0
-    else:
-        target_draft_m = st.slider("Draft [m]", 14.0, 28.0, 20.0, 1.0)
+    st.header("Constraint")
+    allowable_pitch_deg = st.slider("Pitch limit [deg]", 2.0, 15.0, 8.0, 0.5)
+    port_draft_limit_m = st.slider("Port draft limit [m]", 5.0, 80.0, 25.0, 1.0)
+    allowable_offset_m = st.slider("Offset limit [m]", 1.0, 120.0, 10.0, 1.0)
+    max_column_diameter_m = st.slider("Max column diameter [m]", 6.0, 30.0, 15.0, 0.5)
+    gm_min_m = st.slider("Minimum GM [m]", 0.5, 10.0, 2.0, 0.5)
+    mooring_utilization_limit = st.slider("Mooring allowable utilization", 0.2, 0.8, 0.45, 0.05)
 
     st.header("Turbine")
     turbine_mw = st.slider("WTG capacity [MW]", 8.0, 20.0, 15.0, 1.0)
@@ -242,19 +243,20 @@ with st.sidebar:
     )
 
     st.header("Site")
-    water_depth_m = st.number_input("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
-    hs_m = st.number_input("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
+    water_depth_m = st.slider("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
+    hs_m = st.slider("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
     tp_s = 12.0
-
-    st.header("Constraint")
-    allowable_pitch_deg = st.number_input("Pitch limit [deg]", 2.0, 15.0, 8.0, 0.5)
-    port_draft_limit_m = st.number_input("Port draft limit [m]", 5.0, 80.0, 25.0, 1.0)
-    max_offset_slider = max(5.0, min(120.0, water_depth_m * 0.50))
-    allowable_offset_m = st.number_input("Offset limit [m]", 1.0, max_offset_slider, min(10.0, max_offset_slider), 1.0)
+    allowable_offset_m = min(allowable_offset_m, water_depth_m * 0.50)
     allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
-    max_column_diameter_m = st.number_input("Max column diameter [m]", 6.0, 30.0, 15.0, 0.5)
-    gm_min_m = st.number_input("Minimum GM [m]", 0.5, 10.0, 2.0, 0.5)
-    mooring_utilization_limit = st.number_input("Mooring allowable utilization", 0.2, 0.8, 0.45, 0.05)
+
+    st.header("Minimize Foundation CAPEX")
+    optimize_draft = st.toggle("Optimize draft", value=True)
+    if optimize_draft:
+        target_draft_m = 20.0
+    else:
+        max_manual_draft = max(14.0, min(28.0, port_draft_limit_m))
+        target_draft_m = st.slider("Draft [m]", 14.0, max_manual_draft, min(20.0, max_manual_draft), 1.0)
+
     restoring_ratio_min = 1.3
     mooring_line_count = 3
     mooring_safety_factor = 1.5
