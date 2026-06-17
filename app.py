@@ -30,6 +30,19 @@ def compact_number(value: float, unit: str = "") -> str:
     return f"{text} {unit}".strip()
 
 
+def failed_constraints(result) -> list[str]:
+    checks = [
+        ("column diameter", result.column_diameter_pass),
+        ("GM", result.gm_pass),
+        ("pitch / heel", result.stability_pass),
+        ("port draft", result.port_pass),
+        ("offset", result.offset_pass),
+        ("mooring strength", result.mooring_pass),
+        ("ballast", result.ballast_pass),
+    ]
+    return [name for name, passed in checks if not passed]
+
+
 def platform_top_svg(result) -> str:
     width, height = 560, 360
     cx, cy = width / 2, height / 2
@@ -255,13 +268,29 @@ manual_result = evaluate_semisub(base_inputs)
 delta_musd = result.total_capex_musd - optimized_result.total_capex_musd
 delta_pct = 100.0 * delta_musd / max(optimized_result.total_capex_musd, 1e-6)
 status = "PASS" if result.overall_pass else "CHECK"
+selected_label = "Selected Foundation CAPEX" if result.overall_pass else "Best Available Foundation CAPEX"
+optimized_label = "Optimized Foundation CAPEX" if optimized_result.overall_pass else "Best Available Foundation CAPEX"
+delta_label = f"{money_musd(delta_musd)} vs feasible optimum" if optimized_result.overall_pass else "no feasible optimum"
 
 c1, c2, c3 = st.columns([1.2, 1, 1])
-c1.metric("Selected Foundation CAPEX", money_musd(result.total_capex_musd), f"{money_musd(delta_musd)} vs optimum")
-c2.metric("Optimized Foundation CAPEX", money_musd(optimized_result.total_capex_musd))
+c1.metric(selected_label, money_musd(result.total_capex_musd), delta_label)
+c2.metric(optimized_label, money_musd(optimized_result.total_capex_musd))
 c3.metric("CAPEX Penalty", f"{delta_pct:.1f}%", status)
 
 st.progress(min(1.0, max(0.0, result.total_capex_musd / max(optimized_result.total_capex_musd * 1.35, 1e-6))))
+
+if not optimized_result.overall_pass:
+    blockers = ", ".join(failed_constraints(optimized_result))
+    st.error(
+        "No feasible design was found within the current search range and constraints. "
+        f"The displayed result is the lowest-penalty candidate, blocked by: {blockers}."
+    )
+elif not result.overall_pass:
+    blockers = ", ".join(failed_constraints(result))
+    st.warning(
+        "The selected manual settings do not satisfy all constraints. "
+        f"Blocking checks: {blockers}."
+    )
 
 st.subheader("Four Main Levers")
 l1, l2, l3, l4 = st.columns(4)

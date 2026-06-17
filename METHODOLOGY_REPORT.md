@@ -828,7 +828,7 @@ If the concept is infeasible:
 score += 1,000,000
 ```
 
-The lowest score is selected as the optimized result.
+The lowest score is selected as the optimized result. If at least one feasible candidate exists, the feasible candidate with the lowest foundation CAPEX is selected. If no feasible candidate exists in the discrete search range, the tool returns the lowest-penalty candidate and the UI reports that no feasible design was found.
 
 ## 26. Interpretation of Results
 
