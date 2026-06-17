@@ -240,8 +240,8 @@ with st.sidebar:
     )
 
     st.header("Site")
-    water_depth_m = st.slider("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
-    hs_m = st.slider("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
+    water_depth_m = st.number_input("Water depth [m]", min_value=1.0, max_value=3000.0, value=200.0, step=10.0)
+    hs_m = st.number_input("Significant wave height Hs [m]", min_value=0.1, max_value=40.0, value=8.0, step=0.5)
     tp_s = 12.0
     allowable_offset_m = min(allowable_offset_m, water_depth_m * 0.50)
     allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
@@ -304,6 +304,7 @@ l3.metric("Pitch / heel", compact_number(result.static_heel_deg, "deg"), f"limit
 l4.metric("Offset", compact_number(result.offset_m, "m"), f"limit {result.allowable_offset_m:.1f} m")
 
 st.subheader("Platform Layout")
+st.caption("Mooring lines are not visualized.")
 d1, d2 = st.columns(2)
 with d1:
     st.markdown(platform_top_svg(result), unsafe_allow_html=True)
