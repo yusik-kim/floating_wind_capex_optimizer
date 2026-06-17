@@ -224,12 +224,12 @@ st.caption("A concept-screening optimizer for non-experts: choose turbine size, 
 
 with st.sidebar:
     st.header("Constraint")
-    allowable_pitch_deg = st.slider("Pitch limit [deg]", 2.0, 15.0, 8.0, 0.5)
-    port_draft_limit_m = st.slider("Port draft limit [m]", 5.0, 80.0, 25.0, 1.0)
-    allowable_offset_m = st.slider("Offset limit [m]", 1.0, 120.0, 10.0, 1.0)
-    max_column_diameter_m = st.slider("Max column diameter [m]", 6.0, 30.0, 15.0, 0.5)
-    gm_min_m = st.slider("Minimum GM [m]", 0.5, 10.0, 2.0, 0.5)
-    mooring_utilization_limit = st.slider("Mooring allowable utilization", 0.2, 0.8, 0.45, 0.05)
+    allowable_pitch_deg = st.number_input("Pitch limit [deg]", min_value=0.5, max_value=30.0, value=8.0, step=0.5)
+    port_draft_limit_m = st.number_input("Port draft limit [m]", min_value=1.0, max_value=120.0, value=25.0, step=1.0)
+    allowable_offset_m = st.number_input("Offset limit [m]", min_value=0.5, max_value=300.0, value=10.0, step=0.5)
+    max_column_diameter_m = st.number_input("Max column diameter [m]", min_value=1.0, max_value=60.0, value=15.0, step=0.5)
+    gm_min_m = st.number_input("Minimum GM [m]", min_value=0.1, max_value=30.0, value=2.0, step=0.1)
+    mooring_utilization_limit = st.number_input("Mooring allowable utilization", min_value=0.05, max_value=1.0, value=0.45, step=0.05)
 
     st.header("Turbine")
     turbine_mw = st.slider("WTG capacity [MW]", 8.0, 20.0, 15.0, 1.0)
@@ -271,7 +271,7 @@ base_inputs = design_inputs_from_turbine(
 optimized_result = optimize_capex(base_inputs, False, False, False, False)
 result = optimized_result
 status = "PASS" if result.overall_pass else "CHECK"
-capex_label = "Optimized Foundation CAPEX" if result.overall_pass else "Best Available Foundation CAPEX"
+capex_label = "Minimum Foundation CAPEX" if result.overall_pass else "Best Available Foundation CAPEX"
 
 c1, c2, c3 = st.columns([1.2, 1, 1])
 c1.metric(capex_label, money_musd(result.total_capex_musd))

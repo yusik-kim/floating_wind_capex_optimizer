@@ -30,7 +30,7 @@ The optimizer varies five foundation design variables:
 4. Pontoon width
 5. Pontoon height
 
-The sidebar constraints remain fixed project inputs that the user can change with sliders:
+The sidebar constraints remain fixed project inputs that the user can edit directly:
 
 1. Pitch limit
 2. Port draft limit

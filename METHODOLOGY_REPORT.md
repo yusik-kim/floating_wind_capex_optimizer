@@ -36,7 +36,7 @@ In the app, the sidebar is intentionally ordered as:
 Constraint -> Turbine -> Site
 ```
 
-The constraint values are sliders so users can explore how relaxing or tightening a requirement changes the feasible design and foundation CAPEX. The default slider positions represent the current screening limits used by the optimizer.
+The constraint values are fixed project inputs shown as editable numeric fields. Users can still change them to test sensitivity, but the optimizer treats them as constraints rather than design variables.
 
 The current implementation also uses internal default assumptions for hidden advanced parameters:
 
@@ -834,7 +834,7 @@ The top-level optimizer searches foundation design variables:
 
 WTG capacity is selected by the user and is not optimized. The selected WTG capacity is still used to derive rotor diameter, mass, CoG and maximum thrust from the WTG table.
 
-Pitch limit, offset limit, draft limit, GM, column diameter limit, and mooring utilization limit are project constraints. The user can change these constraints with sidebar sliders, but the optimizer does not treat them as design variables.
+Pitch limit, offset limit, draft limit, GM, column diameter limit, and mooring utilization limit are project constraints. The user can change these constraints with sidebar numeric inputs, but the optimizer does not treat them as design variables.
 
 For each candidate combination:
 
