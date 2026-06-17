@@ -64,6 +64,7 @@ class DesignInputs:
     allowable_pitch_deg: float = 8.0
     restoring_ratio_min: float = 1.3
     mooring_line_count: int = 3
+    mooring_utilization_limit: float = 0.45
     allowable_offset_pct_depth: float = 5.0
     mooring_safety_factor: float = 1.5
     mooring_cost_multiplier: float = 1.0
@@ -158,6 +159,7 @@ def design_inputs_from_turbine(
     allowable_pitch_deg: float = 8.0,
     restoring_ratio_min: float = 1.3,
     mooring_line_count: int = 3,
+    mooring_utilization_limit: float = 0.45,
     allowable_offset_pct_depth: float = 5.0,
     mooring_safety_factor: float = 1.5,
     mooring_cost_multiplier: float = 1.0,
@@ -180,6 +182,7 @@ def design_inputs_from_turbine(
         allowable_pitch_deg=allowable_pitch_deg,
         restoring_ratio_min=restoring_ratio_min,
         mooring_line_count=mooring_line_count,
+        mooring_utilization_limit=mooring_utilization_limit,
         allowable_offset_pct_depth=allowable_offset_pct_depth,
         mooring_safety_factor=mooring_safety_factor,
         mooring_cost_multiplier=mooring_cost_multiplier,
@@ -255,7 +258,7 @@ def _mooring_screen(
 
     offset_pass = offset <= allowable_offset
     utilization = environmental_force * inputs.mooring_safety_factor / max(line_count * selected_mbl, 1e-6)
-    mooring_pass = utilization <= 0.45
+    mooring_pass = utilization <= inputs.mooring_utilization_limit
 
     return {
         "environmental_force_mn": environmental_force,
@@ -272,6 +275,7 @@ def _mooring_screen(
         "mooring_cost_musd": mooring_cost,
         "offset_pass": offset_pass,
         "mooring_pass": mooring_pass,
+        "mooring_utilization": utilization,
     }
 
 
@@ -309,7 +313,7 @@ def _constraint_margins_from_inputs(inputs: DesignInputs, result: SemiSubResult)
         "ballast positive": ballast_positive,
         "ballast fraction": ballast_upper,
         "offset": result.offset_m / max(result.allowable_offset_m, 1e-6),
-        "mooring strength": mooring_utilization / 0.45,
+        "mooring strength": mooring_utilization / max(inputs.mooring_utilization_limit, 1e-6),
     }
 
 
@@ -342,11 +346,12 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
         for draft_mult in draft_mults:
             col_dia = template.column_diameter_m * s * geom_mult
             spacing = template.column_spacing_m * s * geom_mult
-            col_height = template.column_height_m * s * max(1.0, draft_mult)
+            freeboard = max(2.0, (template.column_height_m - template.draft_m) * s)
             pont_w = template.pontoon_width_m * s * geom_mult
             pont_h = template.pontoon_height_m * s * min(1.2, draft_mult)
-            draft = min(col_height * 0.85, template.draft_m * s * draft_mult)
-            structural_mass = template.structural_mass_t * (s ** 2.55) * (geom_mult ** 2.2) * (0.95 + 0.1 * draft_mult)
+            draft = template.draft_m * s * draft_mult
+            col_height = draft + freeboard
+            structural_mass = template.structural_mass_t * (s ** 2.55) * (geom_mult ** 2.2) * (0.90 + 0.10 * draft / max(template.draft_m * s, 1e-6))
 
             col_vol, pont_vol = _component_volumes(template.n_columns, col_dia, spacing, pont_w, pont_h, draft)
             total_vol = col_vol + pont_vol

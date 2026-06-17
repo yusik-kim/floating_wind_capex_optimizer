@@ -27,12 +27,19 @@ The primary user-controlled variables are:
 | `allowable_offset_pct_depth` | Allowable horizontal offset. The UI presents this in meters and converts it internally to percent of water depth |
 | `water_depth_m` | Site water depth |
 | `hs_m` | Significant wave height |
-| `tp_s` | Peak wave period, currently stored but not yet used in the equations |
 | `port_draft_limit_m` | Maximum allowable draft for port / tow-out |
 | `max_column_diameter_m` | Maximum allowed column diameter, default 15 m |
-| `mooring_line_count` | Number of mooring lines |
-| `mooring_safety_factor` | Safety factor used in required horizontal stiffness |
-| `mooring_cost_multiplier` | User multiplier for mooring cost sensitivity |
+| `mooring_utilization_limit` | Maximum allowable mooring strength utilization, default 0.45 |
+
+The current implementation also uses internal default assumptions for hidden advanced parameters:
+
+| Internal assumption | Default |
+| --- | ---: |
+| `tp_s` | 12 s |
+| `restoring_ratio_min` | 1.3 |
+| `mooring_line_count` | 3 |
+| `mooring_safety_factor` | 1.5 |
+| `mooring_cost_multiplier` | 1.0 |
 
 ## 3. Turbine Property Interpolation
 
@@ -624,7 +631,7 @@ utilization =
 The mooring strength pass criterion is:
 
 ```text
-utilization <= 0.45
+utilization <= mooring_utilization_limit
 ```
 
 ## 21. Mooring Cost
@@ -753,7 +760,7 @@ offset_pass =
 
 ```text
 mooring_pass =
-    utilization <= 0.45
+    utilization <= mooring_utilization_limit
 ```
 
 Overall feasibility is:

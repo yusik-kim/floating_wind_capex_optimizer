@@ -43,7 +43,7 @@ def failed_constraints(result) -> list[str]:
     return [name for name, passed in checks if not passed]
 
 
-def constraint_margins_for_ui(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor):
+def constraint_margins_for_ui(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit):
     mooring_mbl = 0.00055 * result.mooring_line_diameter_mm**2
     mooring_utilization = result.environmental_force_mn * mooring_safety_factor / max(mooring_line_count * mooring_mbl, 1e-6)
     ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
@@ -56,11 +56,11 @@ def constraint_margins_for_ui(result, gm_min_m, restoring_ratio_min, port_draft_
         "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
         "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
         "offset": (result.offset_m / max(result.allowable_offset_m, 1e-6), f"increase offset limit above {result.offset_m:.1f} m"),
-        "mooring strength": (mooring_utilization / 0.45, "increase line count, reduce safety factor, or allow larger/mooring-costlier lines"),
+        "mooring strength": (mooring_utilization / max(mooring_utilization_limit, 1e-6), f"increase mooring allowable utilization above {mooring_utilization:.2f} or allow stronger mooring"),
     }
 
 
-def most_restrictive_message(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor) -> str:
+def most_restrictive_message(result, gm_min_m, restoring_ratio_min, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit) -> str:
     margins = constraint_margins_for_ui(
         result,
         gm_min_m,
@@ -69,6 +69,7 @@ def most_restrictive_message(result, gm_min_m, restoring_ratio_min, port_draft_l
         max_column_diameter_m,
         mooring_line_count,
         mooring_safety_factor,
+        mooring_utilization_limit,
     )
     failed = {name: data for name, data in margins.items() if data[0] > 1.0}
     if not failed:
@@ -129,7 +130,7 @@ def platform_top_svg(result) -> str:
     """
 
 
-def platform_side_svg(result, max_column_diameter_m: float) -> str:
+def platform_side_svg(result, max_column_diameter_m: float, port_draft_limit_m: float) -> str:
     width, height = 560, 360
     water_y = 202
     keel_y = 304
@@ -155,18 +156,13 @@ def platform_side_svg(result, max_column_diameter_m: float) -> str:
         .dry {{ fill:#ffffff; stroke:#84cc16; stroke-width:4; }}
         .pontoon {{ fill:{fill}; stroke:#b91c1c; stroke-width:2; filter:url(#shadow); }}
         .dim {{ stroke:#111827; stroke-width:1; marker-start:url(#arrow); marker-end:url(#arrow); }}
-        .green {{ stroke:#84cc16; stroke-width:4; marker-start:url(#greenarrow); marker-end:url(#greenarrow); }}
         .thin {{ stroke:#111827; stroke-width:1; fill:none; }}
         .label {{ font: 13px system-ui, sans-serif; fill:#111827; }}
-        .greenlabel {{ font: 14px system-ui, sans-serif; fill:#65a30d; font-weight:600; }}
         .small {{ font: 12px system-ui, sans-serif; fill:#334155; }}
       </style>
       <defs>
         <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
           <path d="M0,0 L8,4 L0,8 z" fill="#111827" />
-        </marker>
-        <marker id="greenarrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
-          <path d="M0,0 L8,4 L0,8 z" fill="#84cc16" />
         </marker>
         <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
           <feDropShadow dx="4" dy="5" stdDeviation="3" flood-color="#000000" flood-opacity="0.20" />
@@ -179,12 +175,13 @@ def platform_side_svg(result, max_column_diameter_m: float) -> str:
       <rect class="column" x="{x2-col_w/2:.1f}" y="{water_y:.1f}" width="{col_w:.1f}" height="{draft_px:.1f}" rx="4" />
       <rect class="dry" x="{x1-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{freeboard_px:.1f}" rx="4" />
       <rect class="dry" x="{x2-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{freeboard_px:.1f}" rx="4" />
-      <line class="green" x1="{x1-col_w/2-42:.1f}" y1="{top_y:.1f}" x2="{x1-col_w/2-42:.1f}" y2="{keel_y:.1f}" />
-      <text class="greenlabel" x="{x1-col_w/2-105:.1f}" y="{(top_y+keel_y)/2+4:.1f}">{result.column_height_m:.1f} m total</text>
+      <line class="dim" x1="{x1-col_w/2-42:.1f}" y1="{top_y:.1f}" x2="{x1-col_w/2-42:.1f}" y2="{keel_y:.1f}" />
+      <text class="label" x="{x1-col_w/2-112:.1f}" y="{(top_y+keel_y)/2+4:.1f}">{result.column_height_m:.1f} m column</text>
       <line class="dim" x1="{x1:.1f}" y1="{keel_y+28:.1f}" x2="{x2:.1f}" y2="{keel_y+28:.1f}" />
       <text class="label" x="{width/2-28:.1f}" y="{keel_y+45:.1f}">{result.column_spacing_m:.1f} m</text>
       <line class="dim" x1="{x2+42:.1f}" y1="{water_y:.1f}" x2="{x2+42:.1f}" y2="{keel_y:.1f}" />
-      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+4:.1f}">{result.draft_m:.1f} m draft</text>
+      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2-4:.1f}">{result.draft_m:.1f} m draft</text>
+      <text class="small" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+14:.1f}">limit {port_draft_limit_m:.1f} m</text>
       <line class="dim" x1="{x1-col_w/2:.1f}" y1="{keel_y+10:.1f}" x2="{x1+col_w/2:.1f}" y2="{keel_y+10:.1f}" />
       <text class="label" x="{x1-col_w/2-2:.1f}" y="{keel_y+24:.1f}">{result.column_diameter_m:.1f} m</text>
       <text class="small" x="20" y="334">Side view: foundation geometry only</text>
@@ -236,20 +233,6 @@ with st.sidebar:
     else:
         target_draft_m = st.slider("Draft [m]", 14.0, 28.0, 20.0, 1.0)
 
-    optimize_pitch = st.toggle("Optimize pitch limit", value=True)
-    if optimize_pitch:
-        allowable_pitch_deg = 8.0
-    else:
-        allowable_pitch_deg = st.slider("Pitch limit [deg]", 5.0, 10.0, 8.0, 0.5)
-
-    optimize_offset = st.toggle("Optimize offset limit", value=True)
-    if optimize_offset:
-        offset_limit_mode = "optimize"
-        manual_allowable_offset_m = 10.0
-    else:
-        offset_limit_mode = "manual"
-        manual_allowable_offset_m = st.slider("Offset limit [m]", 2.0, 120.0, 10.0, 1.0)
-
     st.header("Turbine")
     turbine_mw = st.slider("WTG capacity [MW]", 8.0, 20.0, 15.0, 1.0)
     turbine_props = turbine_from_capacity(turbine_mw)
@@ -261,22 +244,21 @@ with st.sidebar:
     st.header("Site")
     water_depth_m = st.number_input("Water depth [m]", 40.0, 1500.0, 200.0, 10.0)
     hs_m = st.number_input("Significant wave height Hs [m]", 1.0, 20.0, 8.0, 0.5)
-    tp_s = st.number_input("Peak period Tp [s]", 4.0, 25.0, 12.0, 0.5)
-    port_draft_limit_m = st.number_input("Port / tow-out draft limit [m]", 5.0, 80.0, 25.0, 1.0)
+    tp_s = 12.0
 
-    if offset_limit_mode == "optimize":
-        allowable_offset_m = water_depth_m * 0.05
-    else:
-        allowable_offset_m = min(manual_allowable_offset_m, water_depth_m * 0.50)
+    st.header("Constraint")
+    allowable_pitch_deg = st.number_input("Pitch limit [deg]", 2.0, 15.0, 8.0, 0.5)
+    port_draft_limit_m = st.number_input("Port draft limit [m]", 5.0, 80.0, 25.0, 1.0)
+    max_offset_slider = max(5.0, min(120.0, water_depth_m * 0.50))
+    allowable_offset_m = st.number_input("Offset limit [m]", 1.0, max_offset_slider, min(10.0, max_offset_slider), 1.0)
     allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
-
-    st.header("Physical constraints")
     max_column_diameter_m = st.number_input("Max column diameter [m]", 6.0, 30.0, 15.0, 0.5)
     gm_min_m = st.number_input("Minimum GM [m]", 0.5, 10.0, 2.0, 0.5)
-    restoring_ratio_min = st.number_input("Minimum restoring / heeling ratio", 1.0, 3.0, 1.3, 0.1)
-    mooring_line_count = st.number_input("Number of mooring lines", 3, 12, 3, 1)
-    mooring_safety_factor = st.number_input("Mooring safety factor", 1.0, 3.0, 1.5, 0.1)
-    mooring_cost_multiplier = st.number_input("Mooring cost multiplier", 0.5, 3.0, 1.0, 0.1)
+    mooring_utilization_limit = st.number_input("Mooring allowable utilization", 0.2, 0.8, 0.45, 0.05)
+    restoring_ratio_min = 1.3
+    mooring_line_count = 3
+    mooring_safety_factor = 1.5
+    mooring_cost_multiplier = 1.0
 
 base_inputs = design_inputs_from_turbine(
     turbine_mw=turbine_mw,
@@ -288,6 +270,7 @@ base_inputs = design_inputs_from_turbine(
     allowable_pitch_deg=allowable_pitch_deg,
     restoring_ratio_min=restoring_ratio_min,
     mooring_line_count=mooring_line_count,
+    mooring_utilization_limit=mooring_utilization_limit,
     allowable_offset_pct_depth=allowable_offset_pct_depth,
     mooring_safety_factor=mooring_safety_factor,
     mooring_cost_multiplier=mooring_cost_multiplier,
@@ -295,8 +278,8 @@ base_inputs = design_inputs_from_turbine(
     target_draft_m=target_draft_m,
 )
 
-optimized_result = optimize_capex(base_inputs, False, True, True, True)
-result = optimize_capex(base_inputs, False, optimize_draft, optimize_pitch, optimize_offset)
+optimized_result = optimize_capex(base_inputs, False, True, False, False)
+result = optimize_capex(base_inputs, False, optimize_draft, False, False)
 manual_result = evaluate_semisub(base_inputs)
 
 delta_musd = result.total_capex_musd - optimized_result.total_capex_musd
@@ -323,6 +306,7 @@ if not optimized_result.overall_pass:
         max_column_diameter_m,
         mooring_line_count,
         mooring_safety_factor,
+        mooring_utilization_limit,
     )
     st.error(
         "No feasible design was found within the current search range and constraints. "
@@ -338,6 +322,7 @@ elif not result.overall_pass:
         max_column_diameter_m,
         mooring_line_count,
         mooring_safety_factor,
+        mooring_utilization_limit,
     )
     st.warning(
         "The selected manual settings do not satisfy all constraints. "
@@ -347,7 +332,7 @@ elif not result.overall_pass:
 st.subheader("Four Main Levers")
 l1, l2, l3, l4 = st.columns(4)
 l1.metric("WTG capacity", compact_number(result.turbine_mw, "MW"))
-l2.metric("Draft", compact_number(result.draft_m, "m"))
+l2.metric("Draft", compact_number(result.draft_m, "m"), f"limit {port_draft_limit_m:.1f} m")
 l3.metric("Pitch / heel", compact_number(result.static_heel_deg, "deg"), f"limit {result.allowable_pitch_deg:.1f} deg")
 l4.metric("Offset", compact_number(result.offset_m, "m"), f"limit {result.allowable_offset_m:.1f} m")
 
@@ -356,7 +341,7 @@ d1, d2 = st.columns(2)
 with d1:
     st.markdown(platform_top_svg(result), unsafe_allow_html=True)
 with d2:
-    st.markdown(platform_side_svg(result, max_column_diameter_m), unsafe_allow_html=True)
+    st.markdown(platform_side_svg(result, max_column_diameter_m, port_draft_limit_m), unsafe_allow_html=True)
 
 st.subheader("CAPEX Breakdown")
 costs = pd.DataFrame(
@@ -384,21 +369,6 @@ comparison = pd.DataFrame(
     columns=["Lever", "Manual value", "Selected value", "Unit"],
 )
 st.dataframe(comparison, hide_index=True, width="stretch")
-
-st.subheader("Constraint Check")
-checks = pd.DataFrame(
-    [
-        ["Column diameter", result.column_diameter_pass, f"{result.column_diameter_m:.1f} m <= {max_column_diameter_m:.1f} m"],
-        ["GM", result.gm_pass, f"{result.gm_m:.2f} m >= {gm_min_m:.1f} m"],
-        ["Pitch / heel", result.stability_pass, f"{result.static_heel_deg:.2f} deg <= selected limit"],
-        ["Port draft", result.port_pass, f"{result.draft_m:.1f} m <= {port_draft_limit_m:.1f} m"],
-        ["Offset", result.offset_pass, f"{result.offset_m:.2f} m <= {result.allowable_offset_m:.2f} m"],
-        ["Mooring strength", result.mooring_pass, "Screened utilization <= 45%"],
-        ["Ballast", result.ballast_pass, "Ballast positive and <75% displacement"],
-    ],
-    columns=["Constraint", "Pass", "Meaning"],
-)
-st.dataframe(checks, hide_index=True, width="stretch")
 
 with st.expander("WTG capacity relation used for sizing loads"):
     turbine_table = pd.DataFrame(TURBINE_LIBRARY)
