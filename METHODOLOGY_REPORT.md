@@ -442,7 +442,7 @@ static_heel_deg <= allowable_pitch_deg
 
 ## 17. Mooring and Offset Screening in `_mooring_screen`
 
-The mooring method is a first-order catenary screening model. It estimates the line diameter needed to provide sufficient horizontal stiffness and then checks offset and strength.
+The mooring method is now a quasi-static catenary screening model. It uses a small chain property table, then estimates the fairlead force-offset behavior from catenary equilibrium. This is still a concept-screening model, but the mooring stiffness is no longer prescribed by a fitted `diameter^2` stiffness equation.
 
 ### 17.1 Allowable Offset
 
@@ -500,7 +500,7 @@ This currently includes rotor thrust and a simplified wave drift term. Current, 
 
 ### 17.5 Required Horizontal Mooring Stiffness
 
-The required horizontal stiffness is:
+For reporting only, an equivalent required horizontal stiffness is:
 
 ```text
 required_stiffness =
@@ -521,66 +521,140 @@ offset <= allowable_offset
 
 after applying the safety factor.
 
-## 18. Mooring Line Sizing
+The actual offset check below is calculated from the catenary force-offset curve, not from this scalar stiffness.
 
-The code checks a discrete set of chain diameters:
+## 18. Mooring Chain Property Table
+
+The optimizer checks a discrete chain property table, similar in spirit to the WTG table. The current table contains representative offshore chain values:
+
+| Diameter [mm] | Mass [t/m] | MBL [MN] |
+| ---: | ---: | ---: |
+| 76 | 0.113 | 6.00 |
+| 84 | 0.138 | 7.21 |
+| 92 | 0.165 | 8.50 |
+| 102 | 0.203 | 10.22 |
+| 114 | 0.253 | 12.42 |
+| 127 | 0.315 | 14.96 |
+| 140 | 0.382 | 17.61 |
+| 152 | 0.451 | 20.16 |
+| 162 | 0.512 | 22.32 |
+| 177 | 0.611 | 25.62 |
+| 190 | 0.704 | 28.49 |
+| 203 | 0.804 | 31.34 |
+| 220 | 0.944 | 35.01 |
+| 240 | 1.123 | 39.14 |
+| 260 | 1.318 | 42.97 |
+
+These values are catalogue-style screening data representative of high-strength offshore mooring chain. They should be replaced by vendor or project chain data before design use. The important change is that mass and MBL are now read from the table rather than calculated from hidden empirical constants.
+
+For each candidate chain, the code evaluates:
 
 ```text
-diameter = [76, 84, 92, 102, 114, 127, 140, 152, 162, 177, 190, 203, 220] mm
+diameter
+mass_per_m
+MBL
 ```
 
-For each line diameter, the approximate minimum breaking load is:
+The lightest chain that satisfies both offset and strength utilization is selected.
+
+## 19. Quasi-Static Catenary Force-Offset Estimate
+
+### 19.1 Layout Assumptions
+
+The current app does not ask the user to define anchor coordinates or line length. Therefore, the model still needs two layout assumptions:
 
 ```text
-MBL = 0.00055 * diameter^2
+fairlead_height = water_depth - draft
+anchor_radius = max(3 * water_depth, 2 * column_spacing)
+line_length = 1.02 * sqrt(anchor_radius^2 + fairlead_height^2)
+```
+
+These are transparent screening assumptions, not optimized design variables. A project model should replace them with the actual anchor radius, fairlead coordinates, and line length.
+
+### 19.2 Submerged Chain Weight
+
+The chain submerged weight per meter is calculated from the table mass:
+
+```text
+submerged_weight =
+    mass_per_m * g / 1000 * (1 - rho_water / rho_steel)
 ```
 
 where:
 
-- diameter is in mm
-- MBL is in MN
-
-The depth factor is:
-
 ```text
-depth_factor = sqrt(max(60, water_depth) / 200)
+rho_water = 1.025 t/m^3
+rho_steel = 7.85 t/m^3
 ```
 
-The spacing factor is:
+Units:
 
 ```text
-spacing_factor = clamp(column_spacing / 72, 0.8, 1.4)
+MN/m = (t/m) * (m/s^2) / 1000
 ```
 
-The horizontal stiffness per line is:
+### 19.3 Catenary Equation
+
+For an inextensible suspended catenary, the horizontal component of tension is:
 
 ```text
-line_stiffness =
-    0.000018 * diameter^2 / depth_factor
+H = w * a
 ```
 
-The total mooring stiffness is:
+where:
+
+- `H` is horizontal tension
+- `w` is submerged chain weight per meter
+- `a` is the catenary parameter
+
+For a line with horizontal span `x`, vertical separation `z`, and length `L`, the catenary parameter is solved numerically from:
 
 ```text
-total_stiffness =
-    line_count * line_stiffness * spacing_factor
+sqrt(L^2 - z^2) =
+    2 * a * sinh(x / (2 * a))
 ```
 
-The first diameter satisfying:
+This equation is the standard suspended-catenary relation. The app solves it by bisection.
+
+### 19.4 Offset From Force-Offset Curve
+
+For each chain, the code calculates the initial horizontal fairlead tension at zero offset:
 
 ```text
-total_stiffness >= required_stiffness
+H0 = H(anchor_radius)
 ```
 
-is selected.
-
-## 19. Offset Estimate
-
-The estimated offset is:
+Then it evaluates the restoring force at the allowable offset:
 
 ```text
-offset = environmental_force / total_stiffness
+H_limit = H(anchor_radius + allowable_offset)
+
+restoring_limit =
+    line_count * (H_limit - H0)
 ```
+
+The target restoring force is:
+
+```text
+target_restoring =
+    environmental_force * mooring_safety_factor
+```
+
+The offset is estimated from the secant force-offset slope:
+
+```text
+offset =
+    allowable_offset * target_restoring / restoring_limit
+```
+
+The equivalent stiffness reported in the UI and CSV is then:
+
+```text
+equivalent_stiffness =
+    environmental_force / offset
+```
+
+This is a fast approximation of the nonlinear force-offset curve, suitable for concept screening. A higher-fidelity model should solve the full multi-line geometry for each offset and include seabed contact, friction, axial stiffness, current, line dynamics, and directional load sharing.
 
 The offset as a percentage of water depth is:
 
@@ -596,48 +670,26 @@ offset <= allowable_offset
 
 ## 20. Mooring Pretension, Mass, and Strength Check
 
-The line length is estimated as:
+Pretension is the initial fairlead tension at the undisplaced platform position. It is now calculated from the catenary solution rather than assumed as a fraction of MBL:
 
 ```text
-line_length = 3.2 * water_depth + column_spacing
+pretension_t = T0 * 1000 / g
 ```
 
-The chain mass per meter is estimated as:
+where `T0` is the initial fairlead tension from the zero-offset catenary state.
 
-```text
-mass_per_m = 0.0000195 * diameter^2
-```
-
-where:
-
-- diameter is in mm
-- mass per meter is in t/m
-
-Total mooring mass is:
+Total mooring mass is calculated directly from the selected chain table mass and the calculated line length:
 
 ```text
 mooring_mass =
     mass_per_m * line_length * line_count
 ```
 
-Pretension is estimated as 9% of MBL:
-
-```text
-pretension_MN = 0.09 * MBL
-```
-
-and converted to tonnes:
-
-```text
-pretension_t = pretension_MN * 1000 / g
-```
-
-The strength utilization is:
+Strength utilization is based on catenary fairlead tension at the estimated offset:
 
 ```text
 utilization =
-    environmental_force * mooring_safety_factor
-    / (line_count * MBL)
+    fairlead_tension * mooring_safety_factor / MBL
 ```
 
 The mooring strength pass criterion is:
@@ -885,15 +937,24 @@ The current implementation does not include:
 - regional supply-chain cost databases
 - wake, AEP, OPEX, or LCOE
 
-Several coefficients are empirical and should be calibrated against reference projects, vendor data, or higher-fidelity simulations before commercial use.
+Several cost and environmental-load coefficients are empirical and should be calibrated against reference projects, vendor data, or higher-fidelity simulations before commercial use. The mooring chain mass and MBL values are now table-based, but the table is still representative screening data rather than project-certified vendor data.
 
 ## 28. Recommended Next Improvements
 
 The next technical improvements should be:
 
 1. Replace the wave drift coefficient with calibrated site- and geometry-dependent equations.
-2. Add a real mooring stiffness model for catenary, semi-taut, and taut systems.
+2. Replace the screening mooring layout assumptions with user-defined anchor coordinates, fairlead coordinates, line length, chain grade, seabed contact, friction, axial stiffness, and directional multi-line load sharing.
 3. Add platform motion constraints, especially pitch natural period and pitch response.
 4. Add LCOE or revenue-adjusted metrics as alternative objectives, because foundation CAPEX alone does not capture energy production value.
 5. Add multiple platform templates: semi-sub, spar, TLP, barge.
 6. Add calibration cases from public reference platforms.
+
+## 29. References
+
+The catenary force-offset calculation is based on standard static catenary relations for a flexible line under uniform self-weight:
+
+- Catenary equation and tension relations: https://en.wikipedia.org/wiki/Catenary
+- OpenFAST MoorDyn documentation, for context on higher-fidelity mooring modeling beyond this app's quasi-static screen: https://openfast.readthedocs.io/en/main/source/user/moordyn/index.html
+
+For design use, the chain property table should be replaced with project chain data from the applicable standard, supplier catalogue, or certification basis, for example DNV offshore mooring chain requirements or vendor-certified R3/R4/R5 chain data.

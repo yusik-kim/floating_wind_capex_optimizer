@@ -20,6 +20,7 @@ USD_PER_T_CHAIN = 4600.0
 USD_PER_MW_WTG = 1_250_000.0
 USD_PER_MW_ELECTRICAL = 260_000.0
 USD_INSTALL_BASE = 8_000_000.0
+STEEL_DENSITY_T_PER_M3 = 7.85
 
 
 TURBINE_LIBRARY = [
@@ -29,6 +30,28 @@ TURBINE_LIBRARY = [
     {"mw": 15.0, "rotor_diameter_m": 240.0, "hub_height_m": 150.0, "mass_t": 2200.0, "cog_m": 80.0, "thrust_mn": 2.50},
     {"mw": 18.0, "rotor_diameter_m": 270.0, "hub_height_m": 165.0, "mass_t": 2750.0, "cog_m": 90.0, "thrust_mn": 3.15},
     {"mw": 20.0, "rotor_diameter_m": 290.0, "hub_height_m": 175.0, "mass_t": 3200.0, "cog_m": 98.0, "thrust_mn": 3.65},
+]
+
+
+# Catalogue-style offshore chain properties used for concept screening.
+# MBL values are representative of high-strength offshore mooring chain
+# and should be replaced with project/vendor data for design work.
+CHAIN_LIBRARY = [
+    {"diameter_mm": 76.0, "mass_t_per_m": 0.113, "mbl_mn": 6.00},
+    {"diameter_mm": 84.0, "mass_t_per_m": 0.138, "mbl_mn": 7.21},
+    {"diameter_mm": 92.0, "mass_t_per_m": 0.165, "mbl_mn": 8.50},
+    {"diameter_mm": 102.0, "mass_t_per_m": 0.203, "mbl_mn": 10.22},
+    {"diameter_mm": 114.0, "mass_t_per_m": 0.253, "mbl_mn": 12.42},
+    {"diameter_mm": 127.0, "mass_t_per_m": 0.315, "mbl_mn": 14.96},
+    {"diameter_mm": 140.0, "mass_t_per_m": 0.382, "mbl_mn": 17.61},
+    {"diameter_mm": 152.0, "mass_t_per_m": 0.451, "mbl_mn": 20.16},
+    {"diameter_mm": 162.0, "mass_t_per_m": 0.512, "mbl_mn": 22.32},
+    {"diameter_mm": 177.0, "mass_t_per_m": 0.611, "mbl_mn": 25.62},
+    {"diameter_mm": 190.0, "mass_t_per_m": 0.704, "mbl_mn": 28.49},
+    {"diameter_mm": 203.0, "mass_t_per_m": 0.804, "mbl_mn": 31.34},
+    {"diameter_mm": 220.0, "mass_t_per_m": 0.944, "mbl_mn": 35.01},
+    {"diameter_mm": 240.0, "mass_t_per_m": 1.123, "mbl_mn": 39.14},
+    {"diameter_mm": 260.0, "mass_t_per_m": 1.318, "mbl_mn": 42.97},
 ]
 
 
@@ -105,7 +128,9 @@ class SemiSubResult:
     offset_pct_depth: float
     mooring_line_diameter_mm: float
     mooring_line_length_m: float
+    mooring_fairlead_tension_mn: float
     mooring_pretension_t_per_line: float
+    mooring_utilization: float
     mooring_mass_t: float
     mooring_cost_musd: float
     platform_capex_musd: float
@@ -226,13 +251,105 @@ def _waterplane_inertia(n: int, col_dia: float, spacing: float) -> float:
     return sum(local_i + area * x**2 for x, _ in coords[:n])
 
 
+def _catenary_horizontal_tension(
+    submerged_weight_mn_per_m: float,
+    line_length_m: float,
+    horizontal_span_m: float,
+    fairlead_height_m: float,
+) -> tuple[float, float]:
+    """Return horizontal tension and fairlead tension for a suspended catenary line.
+
+    The line is treated as a flexible inextensible catenary between anchor and fairlead.
+    This is still a screening model, but the force-offset behavior comes from catenary
+    equilibrium rather than a fitted scalar stiffness.
+    """
+    horizontal_span_m = max(1.0, horizontal_span_m)
+    fairlead_height_m = max(0.1, fairlead_height_m)
+    straight_length = math.hypot(horizontal_span_m, fairlead_height_m)
+    if line_length_m <= straight_length:
+        # Near-taut fallback. A full model would include axial stiffness EA.
+        excess = max(0.01, straight_length - line_length_m)
+        horizontal_tension = submerged_weight_mn_per_m * straight_length**2 / excess
+        vertical_tension = submerged_weight_mn_per_m * line_length_m
+        return horizontal_tension, math.hypot(horizontal_tension, vertical_tension)
+
+    suspended_span = math.sqrt(max(line_length_m**2 - fairlead_height_m**2, 1e-6))
+
+    def span_from_a(a: float) -> float:
+        return 2.0 * a * math.sinh(horizontal_span_m / (2.0 * a))
+
+    low = 1e-3
+    high = 1.0
+    while span_from_a(high) > suspended_span and high < 1e8:
+        high *= 2.0
+
+    for _ in range(24):
+        mid = 0.5 * (low + high)
+        if span_from_a(mid) > suspended_span:
+            low = mid
+        else:
+            high = mid
+
+    a = high
+    horizontal_tension = submerged_weight_mn_per_m * a
+    vertical_tension = submerged_weight_mn_per_m * line_length_m
+    return horizontal_tension, math.hypot(horizontal_tension, vertical_tension)
+
+
+def _catenary_offset_for_chain(
+    chain: dict,
+    environmental_force_mn: float,
+    line_count: int,
+    water_depth_m: float,
+    draft_m: float,
+    column_spacing_m: float,
+    allowable_offset_m: float,
+    safety_factor: float,
+) -> dict:
+    fairlead_height = max(1.0, water_depth_m - draft_m)
+    anchor_radius = max(3.0 * water_depth_m, 2.0 * column_spacing_m)
+    line_length = 1.02 * math.hypot(anchor_radius, fairlead_height)
+    submerged_weight = chain["mass_t_per_m"] * G / 1000.0 * (1.0 - RHO_SEAWATER_T_PER_M3 / STEEL_DENSITY_T_PER_M3)
+
+    h0, t0 = _catenary_horizontal_tension(submerged_weight, line_length, anchor_radius, fairlead_height)
+    target_restoring = environmental_force_mn * safety_factor
+
+    def restoring_at(offset: float) -> tuple[float, float, float]:
+        h, t = _catenary_horizontal_tension(
+            submerged_weight,
+            line_length,
+            anchor_radius + max(0.0, offset),
+            fairlead_height,
+        )
+        restoring = line_count * max(0.0, h - h0)
+        return restoring, h, t
+
+    restoring_limit, _, _ = restoring_at(allowable_offset_m)
+    if restoring_limit <= 1e-9:
+        offset = max(allowable_offset_m * 4.0, water_depth_m * 0.25, 20.0)
+    else:
+        offset = allowable_offset_m * target_restoring / restoring_limit
+    restoring, h, fairlead_tension = restoring_at(offset)
+
+    equivalent_stiffness = environmental_force_mn / max(offset, 1e-6)
+    pretension_t = t0 * 1000.0 / G
+    return {
+        "offset_m": offset,
+        "equivalent_stiffness_mn_per_m": equivalent_stiffness,
+        "line_length_m": line_length,
+        "pretension_t": pretension_t,
+        "fairlead_tension_mn": fairlead_tension,
+        "restoring_mn": restoring,
+    }
+
+
 def _mooring_screen(
     inputs: DesignInputs,
     column_diameter_m: float,
     column_spacing_m: float,
     draft_m: float,
 ) -> dict:
-    """First-order catenary mooring and offset screening."""
+    """Quasi-static catenary mooring and offset screening."""
     line_count = max(3, int(inputs.mooring_line_count))
     allowable_offset = max(1.0, inputs.water_depth_m * inputs.allowable_offset_pct_depth / 100.0)
 
@@ -241,32 +358,38 @@ def _mooring_screen(
     environmental_force = inputs.max_thrust_mn + wave_drift
     required_stiffness = environmental_force * inputs.mooring_safety_factor / allowable_offset
 
-    depth_factor = math.sqrt(max(60.0, inputs.water_depth_m) / 200.0)
-    spacing_factor = max(0.8, min(1.4, column_spacing_m / 72.0))
-    selected_diameter = 220.0
-    selected_stiffness = 0.0
-    selected_mbl = 0.0
+    selected_chain = CHAIN_LIBRARY[-1]
+    selected_response = None
+    selected_utilization = math.inf
 
-    for diameter in [76, 84, 92, 102, 114, 127, 140, 152, 162, 177, 190, 203, 220, 240, 260]:
-        mbl_mn = 0.00055 * diameter**2
-        line_stiffness = 0.000018 * diameter**2 / depth_factor
-        total_stiffness = line_count * line_stiffness * spacing_factor
-        utilization = environmental_force * inputs.mooring_safety_factor / max(line_count * mbl_mn, 1e-6)
-        selected_diameter = float(diameter)
-        selected_stiffness = total_stiffness
-        selected_mbl = mbl_mn
-        if total_stiffness >= required_stiffness and utilization <= inputs.mooring_utilization_limit:
+    for chain in CHAIN_LIBRARY:
+        response = _catenary_offset_for_chain(
+            chain,
+            environmental_force,
+            line_count,
+            inputs.water_depth_m,
+            draft_m,
+            column_spacing_m,
+            allowable_offset,
+            inputs.mooring_safety_factor,
+        )
+        utilization = response["fairlead_tension_mn"] * inputs.mooring_safety_factor / max(chain["mbl_mn"], 1e-6)
+        selected_chain = chain
+        selected_response = response
+        selected_utilization = utilization
+        if response["offset_m"] <= allowable_offset and utilization <= inputs.mooring_utilization_limit:
             break
 
-    offset = environmental_force / max(selected_stiffness, 1e-6)
+    assert selected_response is not None
+    selected_stiffness = selected_response["equivalent_stiffness_mn_per_m"]
+    offset = selected_response["offset_m"]
     offset_pct = 100.0 * offset / max(inputs.water_depth_m, 1e-6)
-    line_length = inputs.water_depth_m * 3.2 + column_spacing_m
-    mass_per_m_t = 0.0000195 * selected_diameter**2
+    line_length = selected_response["line_length_m"]
+    mass_per_m_t = selected_chain["mass_t_per_m"]
     mooring_mass = mass_per_m_t * line_length * line_count
-    pretension_mn = 0.09 * selected_mbl
-    pretension_t = pretension_mn * 1000.0 / G
+    pretension_t = selected_response["pretension_t"]
 
-    anchor_cost_musd = 0.31 * line_count * (selected_diameter / 120.0) ** 1.2
+    anchor_cost_musd = 0.31 * line_count * (selected_chain["diameter_mm"] / 120.0) ** 1.2
     install_cost_musd = 0.10 * line_count * (inputs.water_depth_m / 200.0) ** 0.35
     mooring_cost = (
         mooring_mass * USD_PER_T_CHAIN / 1_000_000.0
@@ -275,8 +398,8 @@ def _mooring_screen(
     ) * inputs.mooring_cost_multiplier
 
     offset_pass = offset <= allowable_offset
-    utilization = environmental_force * inputs.mooring_safety_factor / max(line_count * selected_mbl, 1e-6)
-    mooring_pass = utilization <= inputs.mooring_utilization_limit and selected_stiffness >= required_stiffness
+    utilization = selected_utilization
+    mooring_pass = utilization <= inputs.mooring_utilization_limit and offset_pass
 
     return {
         "environmental_force_mn": environmental_force,
@@ -286,9 +409,11 @@ def _mooring_screen(
         "mooring_stiffness_mn_per_m": selected_stiffness,
         "offset_m": offset,
         "offset_pct_depth": offset_pct,
-        "mooring_line_diameter_mm": selected_diameter,
+        "mooring_line_diameter_mm": selected_chain["diameter_mm"],
         "mooring_line_length_m": line_length,
+        "mooring_fairlead_tension_mn": selected_response["fairlead_tension_mn"],
         "mooring_pretension_t_per_line": pretension_t,
+        "mooring_utilization": utilization,
         "mooring_mass_t": mooring_mass,
         "mooring_cost_musd": mooring_cost,
         "offset_pass": offset_pass,
@@ -317,11 +442,6 @@ def _capex_breakdown(inputs: DesignInputs, structural_mass_t: float, ballast_t: 
 def _constraint_margins_from_inputs(inputs: DesignInputs, result: SemiSubResult) -> dict[str, float]:
     ballast_upper = result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6)
     ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
-    mooring_utilization = (
-        result.environmental_force_mn
-        * inputs.mooring_safety_factor
-        / max(inputs.mooring_line_count * 0.00055 * result.mooring_line_diameter_mm**2, 1e-6)
-    )
     return {
         "column diameter": result.column_diameter_m / max(inputs.max_column_diameter_m, 1e-6),
         "GM": inputs.gm_min_m / max(result.gm_m, 1e-6),
@@ -330,7 +450,7 @@ def _constraint_margins_from_inputs(inputs: DesignInputs, result: SemiSubResult)
         "ballast positive": ballast_positive,
         "ballast fraction": ballast_upper,
         "offset": result.offset_m / max(result.allowable_offset_m, 1e-6),
-        "mooring strength": mooring_utilization / max(inputs.mooring_utilization_limit, 1e-6),
+        "mooring strength": result.mooring_utilization / max(inputs.mooring_utilization_limit, 1e-6),
     }
 
 
@@ -470,7 +590,9 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             offset_pct_depth=mooring["offset_pct_depth"],
                             mooring_line_diameter_mm=mooring["mooring_line_diameter_mm"],
                             mooring_line_length_m=mooring["mooring_line_length_m"],
+                            mooring_fairlead_tension_mn=mooring["mooring_fairlead_tension_mn"],
                             mooring_pretension_t_per_line=mooring["mooring_pretension_t_per_line"],
+                            mooring_utilization=mooring["mooring_utilization"],
                             mooring_mass_t=mooring["mooring_mass_t"],
                             mooring_cost_musd=mooring["mooring_cost_musd"],
                             platform_capex_musd=capex["platform_capex_musd"],

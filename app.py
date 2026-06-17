@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from engine import (
+    CHAIN_LIBRARY,
     TURBINE_LIBRARY,
     design_inputs_from_turbine,
     optimize_capex,
@@ -43,8 +44,6 @@ def failed_constraints(result) -> list[str]:
 
 
 def constraint_margins_for_ui(result, gm_min_m, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit):
-    mooring_mbl = 0.00055 * result.mooring_line_diameter_mm**2
-    mooring_utilization = result.environmental_force_mn * mooring_safety_factor / max(mooring_line_count * mooring_mbl, 1e-6)
     ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
     return {
         "column diameter": (result.column_diameter_m / max(max_column_diameter_m, 1e-6), f"increase max column diameter above {result.column_diameter_m:.1f} m"),
@@ -54,7 +53,7 @@ def constraint_margins_for_ui(result, gm_min_m, port_draft_limit_m, max_column_d
         "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
         "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
         "offset": (result.offset_m / max(result.allowable_offset_m, 1e-6), f"increase offset limit above {result.offset_m:.1f} m"),
-        "mooring strength": (mooring_utilization / max(mooring_utilization_limit, 1e-6), f"increase mooring allowable utilization above {mooring_utilization:.2f} or allow stronger mooring"),
+        "mooring strength": (result.mooring_utilization / max(mooring_utilization_limit, 1e-6), f"increase mooring allowable utilization above {result.mooring_utilization:.2f} or allow stronger mooring"),
     }
 
 
@@ -353,6 +352,17 @@ with st.expander("WTG capacity relation used for sizing loads"):
     )
     st.dataframe(turbine_table, hide_index=True, width="stretch")
 
+with st.expander("Mooring chain property table used for screening"):
+    chain_table = pd.DataFrame(CHAIN_LIBRARY)
+    chain_table = chain_table.rename(
+        columns={
+            "diameter_mm": "Diameter [mm]",
+            "mass_t_per_m": "Mass [t/m]",
+            "mbl_mn": "MBL [MN]",
+        }
+    )
+    st.dataframe(chain_table, hide_index=True, width="stretch")
+
 with st.expander("Detailed engineering values"):
     details = pd.DataFrame(
         [
@@ -367,7 +377,9 @@ with st.expander("Detailed engineering values"):
             ["Restoring / heeling", result.restoring_ratio, "-"],
             ["Environmental force", result.environmental_force_mn, "MN"],
             ["Mooring line diameter", result.mooring_line_diameter_mm, "mm"],
+            ["Mooring fairlead tension", result.mooring_fairlead_tension_mn, "MN"],
             ["Mooring pretension", result.mooring_pretension_t_per_line, "t/line"],
+            ["Mooring utilization", result.mooring_utilization, "-"],
             ["Mooring mass", result.mooring_mass_t, "t"],
             ["CAPEX per MW", result.capex_per_mw_musd, "USD million/MW"],
         ],
