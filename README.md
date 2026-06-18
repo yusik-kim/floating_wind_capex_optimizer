@@ -18,7 +18,7 @@ py -m streamlit run app.py
 
 This is concept-level screening only. It is not suitable for certification or FEED design without independent verification.
 
-Module 5 uses a chain property table and a quasi-static catenary force-offset screening calculation to estimate selected line size, pretension, offset, mooring mass and indicative mooring cost.
+Module 5 uses a chain property table and a quasi-static catenary force-offset screening calculation to estimate selected line size, offset, mooring mass and indicative mooring cost.
 
 Module 6 adds a foundation CAPEX optimization workflow. WTG capacity remains a user-selected sizing input, and WTG mass, CoG and thrust are taken from the built-in WTG table. WTG supply cost is shown separately but excluded from the optimization objective.
 

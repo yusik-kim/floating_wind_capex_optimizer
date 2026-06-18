@@ -25,7 +25,6 @@ The primary user-controlled variables are:
 | `allowable_pitch_deg` | Allowable static pitch / heel angle |
 | `allowable_offset_pct_depth` | Allowable horizontal offset. The UI presents this in meters and converts it internally to percent of water depth |
 | `water_depth_m` | Site water depth |
-| `hs_m` | Significant wave height |
 | `port_draft_limit_m` | Maximum allowable draft for port / tow-out |
 | `max_column_diameter_m` | Maximum allowed column diameter, default 15 m |
 | `mooring_utilization_limit` | Maximum allowable mooring strength utilization, default 0.45 |
@@ -461,67 +460,16 @@ allowable_offset_pct_depth = 5%
 allowable_offset = 10 m
 ```
 
-### 17.2 Platform Projected Area
+### 17.2 Mooring Demand
 
-Projected area is estimated from the three columns:
-
-```text
-projected_area =
-    max(1.0, 3 * column_diameter * draft)
-```
-
-### 17.3 Wave Drift Force
-
-Wave drift force is estimated by:
+The horizontal load used for mooring screening is:
 
 ```text
-wave_drift_force =
-    0.00008 * projected_area * Hs^2
+mooring_demand =
+    max_thrust
 ```
 
-Units:
-
-- projected area is in m^2
-- Hs is in m
-- wave drift force is in MN
-
-This coefficient is empirical and should be calibrated against reference studies.
-
-### 17.4 Total Environmental Force
-
-The horizontal environmental force is:
-
-```text
-environmental_force =
-    max_thrust + wave_drift_force
-```
-
-This currently includes rotor thrust and a simplified wave drift term. Current, wind drag on platform, second-order drift, and dynamic amplification are not included.
-
-### 17.5 Required Horizontal Mooring Stiffness
-
-For reporting only, an equivalent required horizontal stiffness is:
-
-```text
-required_stiffness =
-    environmental_force * mooring_safety_factor / allowable_offset
-```
-
-Units:
-
-```text
-MN/m = MN / m
-```
-
-This is equivalent to requiring:
-
-```text
-offset <= allowable_offset
-```
-
-after applying the safety factor.
-
-The actual offset check below is calculated from the catenary force-offset curve, not from this scalar stiffness.
+For now, the mooring screening load is rotor thrust only. Current load, wind drag on the platform, second-order hydrodynamic effects, and dynamic amplification are intentionally excluded until a defensible project-specific hydrodynamic method is added.
 
 ## 18. Mooring Chain Property Table
 
@@ -637,8 +585,17 @@ The target restoring force is:
 
 ```text
 target_restoring =
-    environmental_force * mooring_safety_factor
+    mooring_demand * mooring_safety_factor
 ```
+
+For reporting only, an equivalent required horizontal stiffness is also calculated:
+
+```text
+required_stiffness =
+    target_restoring / allowable_offset
+```
+
+This stiffness is not used to select the line directly. The actual offset check is calculated from the catenary force-offset curve.
 
 The offset is estimated from the secant force-offset slope:
 
@@ -651,7 +608,7 @@ The equivalent stiffness reported in the UI and CSV is then:
 
 ```text
 equivalent_stiffness =
-    environmental_force / offset
+    mooring_demand / offset
 ```
 
 This is a fast approximation of the nonlinear force-offset curve, suitable for concept screening. A higher-fidelity model should solve the full multi-line geometry for each offset and include seabed contact, friction, axial stiffness, current, line dynamics, and directional load sharing.
@@ -668,15 +625,7 @@ The offset pass criterion is:
 offset <= allowable_offset
 ```
 
-## 20. Mooring Pretension, Mass, and Strength Check
-
-Pretension is the initial fairlead tension at the undisplaced platform position. It is now calculated from the catenary solution rather than assumed as a fraction of MBL:
-
-```text
-pretension_t = T0 * 1000 / g
-```
-
-where `T0` is the initial fairlead tension from the zero-offset catenary state.
+## 20. Mooring Mass and Strength Check
 
 Total mooring mass is calculated directly from the selected chain table mass and the calculated line length:
 
@@ -823,7 +772,7 @@ offset_pass =
 ```text
 mooring_pass =
     utilization <= mooring_utilization_limit
-    and selected_stiffness >= required_stiffness
+    and offset_pass
 ```
 
 Overall feasibility is:
@@ -937,13 +886,13 @@ The current implementation does not include:
 - regional supply-chain cost databases
 - wake, AEP, OPEX, or LCOE
 
-Several cost and environmental-load coefficients are empirical and should be calibrated against reference projects, vendor data, or higher-fidelity simulations before commercial use. The mooring chain mass and MBL values are now table-based, but the table is still representative screening data rather than project-certified vendor data.
+Several cost and screening-load assumptions should be calibrated against reference projects, vendor data, or higher-fidelity simulations before commercial use. The mooring chain mass and MBL values are now table-based, but the table is still representative screening data rather than project-certified vendor data.
 
 ## 28. Recommended Next Improvements
 
 The next technical improvements should be:
 
-1. Replace the wave drift coefficient with calibrated site- and geometry-dependent equations.
+1. Add a defensible hydrodynamic/environmental load model for current, platform wind drag, second-order hydrodynamic effects, and dynamic amplification when project data are available.
 2. Replace the screening mooring layout assumptions with user-defined anchor coordinates, fairlead coordinates, line length, chain grade, seabed contact, friction, axial stiffness, and directional multi-line load sharing.
 3. Add platform motion constraints, especially pitch natural period and pitch response.
 4. Add LCOE or revenue-adjusted metrics as alternative objectives, because foundation CAPEX alone does not capture energy production value.

@@ -240,7 +240,6 @@ with st.sidebar:
 
     st.header("Site")
     water_depth_m = st.number_input("Water depth [m]", min_value=1.0, max_value=3000.0, value=200.0, step=10.0)
-    hs_m = st.number_input("Significant wave height Hs [m]", min_value=0.1, max_value=40.0, value=8.0, step=0.5)
     tp_s = 12.0
     allowable_offset_m = min(allowable_offset_m, water_depth_m * 0.50)
     allowable_offset_pct_depth = 100.0 * allowable_offset_m / max(water_depth_m, 1e-6)
@@ -253,7 +252,6 @@ with st.sidebar:
 base_inputs = design_inputs_from_turbine(
     turbine_mw=turbine_mw,
     water_depth_m=water_depth_m,
-    hs_m=hs_m,
     tp_s=tp_s,
     port_draft_limit_m=port_draft_limit_m,
     gm_min_m=gm_min_m,
@@ -375,10 +373,9 @@ with st.expander("Detailed engineering values"):
             ["Ballast", result.ballast_t, "t"],
             ["GM", result.gm_m, "m"],
             ["Restoring / heeling", result.restoring_ratio, "-"],
-            ["Environmental force", result.environmental_force_mn, "MN"],
+            ["Mooring demand (rotor thrust)", result.mooring_demand_mn, "MN"],
             ["Mooring line diameter", result.mooring_line_diameter_mm, "mm"],
             ["Mooring fairlead tension", result.mooring_fairlead_tension_mn, "MN"],
-            ["Mooring pretension", result.mooring_pretension_t_per_line, "t/line"],
             ["Mooring utilization", result.mooring_utilization, "-"],
             ["Mooring mass", result.mooring_mass_t, "t"],
             ["CAPEX per MW", result.capex_per_mw_musd, "USD million/MW"],
