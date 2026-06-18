@@ -247,7 +247,6 @@ with st.sidebar:
     mooring_line_count = 3
     mooring_safety_factor = 1.5
     mooring_cost_multiplier = 1.0
-    target_draft_m = None
 
 base_inputs = design_inputs_from_turbine(
     turbine_mw=turbine_mw,
@@ -262,7 +261,6 @@ base_inputs = design_inputs_from_turbine(
     mooring_safety_factor=mooring_safety_factor,
     mooring_cost_multiplier=mooring_cost_multiplier,
     max_column_diameter_m=max_column_diameter_m,
-    target_draft_m=target_draft_m,
 )
 
 optimized_result = optimize_capex(base_inputs, False, False, False, False)
