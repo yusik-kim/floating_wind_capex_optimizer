@@ -30,6 +30,14 @@ def compact_number(value: float, unit: str = "") -> str:
     return f"{text} {unit}".strip()
 
 
+def operation_draft_m(result) -> float:
+    return getattr(result, "draft_m", getattr(result, "operation_draft_m", 0.0))
+
+
+def harbor_draft_m(result) -> float:
+    return getattr(result, "deballasted_draft_m", operation_draft_m(result))
+
+
 def failed_constraints(result) -> list[str]:
     checks = [
         ("column diameter", result.column_diameter_pass),
@@ -45,11 +53,12 @@ def failed_constraints(result) -> list[str]:
 
 def constraint_margins_for_ui(result, gm_min_m, harbor_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit):
     ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
+    harbor_draft = harbor_draft_m(result)
     return {
         "column diameter": (result.column_diameter_m / max(max_column_diameter_m, 1e-6), f"increase max column diameter above {result.column_diameter_m:.1f} m"),
         "GM": (gm_min_m / max(result.gm_m, 1e-6), f"reduce minimum GM below {result.gm_m:.2f} m or allow larger geometry"),
         "pitch / heel": (result.static_heel_deg / max(result.allowable_pitch_deg, 1e-6), f"increase pitch limit above {result.static_heel_deg:.1f} deg or allow larger geometry"),
-        "harbor draft": (result.deballasted_draft_m / max(harbor_draft_limit_m, 1e-6), f"increase harbor draft limit above {result.deballasted_draft_m:.1f} m"),
+        "harbor draft": (harbor_draft / max(harbor_draft_limit_m, 1e-6), f"increase harbor draft limit above {harbor_draft:.1f} m"),
         "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
         "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
         "offset": (result.offset_m / max(result.allowable_offset_m, 1e-6), f"increase offset limit above {result.offset_m:.1f} m"),
@@ -133,7 +142,9 @@ def platform_side_svg(result, max_column_diameter_m: float, harbor_draft_limit_m
     available_height = 220.0
     col_scale = available_height / max(result.column_height_m, 1.0)
     col_height_px = result.column_height_m * col_scale
-    draft_px = result.draft_m * col_scale
+    operation_draft = operation_draft_m(result)
+    harbor_draft = harbor_draft_m(result)
+    draft_px = operation_draft * col_scale
     freeboard_px = max(0.0, col_height_px - draft_px)
     top_y = keel_y - col_height_px
     water_y = keel_y - draft_px
@@ -176,8 +187,8 @@ def platform_side_svg(result, max_column_diameter_m: float, harbor_draft_limit_m
       <line class="dim" x1="{x1:.1f}" y1="{keel_y+28:.1f}" x2="{x2:.1f}" y2="{keel_y+28:.1f}" />
       <text class="label" x="{width/2-28:.1f}" y="{keel_y+45:.1f}">{result.column_spacing_m:.1f} m</text>
       <line class="dim" x1="{x2+42:.1f}" y1="{water_y:.1f}" x2="{x2+42:.1f}" y2="{keel_y:.1f}" />
-      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2-4:.1f}">{result.draft_m:.1f} m operation</text>
-      <text class="small" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+14:.1f}">harbor {result.deballasted_draft_m:.1f} m <= {harbor_draft_limit_m:.1f} m</text>
+      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2-4:.1f}">{operation_draft:.1f} m operation</text>
+      <text class="small" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+14:.1f}">harbor {harbor_draft:.1f} m <= {harbor_draft_limit_m:.1f} m</text>
       <line class="dim" x1="{x1-col_w/2:.1f}" y1="{keel_y+10:.1f}" x2="{x1+col_w/2:.1f}" y2="{keel_y+10:.1f}" />
       <text class="label" x="{x1-col_w/2-2:.1f}" y="{keel_y+24:.1f}">{result.column_diameter_m:.1f} m</text>
       <text class="small" x="20" y="334">Side view: foundation geometry only</text>
@@ -293,8 +304,10 @@ if not result.overall_pass:
 
 st.subheader("Key Results")
 l1, l2, l3, l4 = st.columns(4)
+operation_draft = operation_draft_m(result)
+harbor_draft = harbor_draft_m(result)
 l1.metric("WTG capacity", compact_number(result.turbine_mw, "MW"))
-l2.metric("Operation draft", compact_number(result.draft_m, "m"), f"harbor {result.deballasted_draft_m:.1f} m / limit {harbor_draft_limit_m:.1f} m")
+l2.metric("Operation draft", compact_number(operation_draft, "m"), f"harbor {harbor_draft:.1f} m / limit {harbor_draft_limit_m:.1f} m")
 l3.metric("Pitch / heel", compact_number(result.static_heel_deg, "deg"), f"limit {result.allowable_pitch_deg:.1f} deg")
 l4.metric("Offset", compact_number(result.offset_m, "m"), f"limit {result.allowable_offset_m:.1f} m")
 
@@ -324,8 +337,8 @@ comparison = pd.DataFrame(
     [
         ["Column spacing", result.column_spacing_m, "m"],
         ["Column diameter", result.column_diameter_m, "m"],
-        ["Operation draft", result.draft_m, "m"],
-        ["Deballasted harbor draft", result.deballasted_draft_m, "m"],
+        ["Operation draft", operation_draft, "m"],
+        ["Deballasted harbor draft", harbor_draft, "m"],
         ["Pontoon width", result.pontoon_width_m, "m"],
         ["Pontoon height", result.pontoon_height_m, "m"],
         ["Foundation CAPEX", result.total_capex_musd, "USD million"],
@@ -367,8 +380,8 @@ with st.expander("Detailed engineering values"):
             ["Column height", result.column_height_m, "m"],
             ["Pontoon width", result.pontoon_width_m, "m"],
             ["Pontoon height", result.pontoon_height_m, "m"],
-            ["Operation draft", result.draft_m, "m"],
-            ["Deballasted harbor draft", result.deballasted_draft_m, "m"],
+            ["Operation draft", operation_draft, "m"],
+            ["Deballasted harbor draft", harbor_draft, "m"],
             ["Structural mass", result.structural_mass_t, "t"],
             ["Ballast", result.ballast_t, "t"],
             ["GM", result.gm_m, "m"],
