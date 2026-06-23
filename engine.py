@@ -17,7 +17,6 @@ G = 9.81
 USD_PER_T_STEEL = 5200.0
 USD_PER_T_BALLAST = 140.0
 USD_PER_T_CHAIN = 4600.0
-USD_PER_MW_WTG = 1_250_000.0
 USD_PER_MW_ELECTRICAL = 260_000.0
 USD_INSTALL_BASE = 8_000_000.0
 STEEL_DENSITY_T_PER_M3 = 7.85
@@ -67,7 +66,7 @@ class SemiSubTemplate:
     pontoon_width_m: float = 10.0
     pontoon_height_m: float = 8.0
     draft_m: float = 20.0
-    structural_mass_t: float = 6500.0
+    structural_mass_t: float = 4000.0
     structural_cog_above_keel_m: float = 11.0
 
 
@@ -105,6 +104,7 @@ class SemiSubResult:
     pontoon_width_m: float
     pontoon_height_m: float
     draft_m: float
+    deballasted_draft_m: float
     structural_mass_t: float
     displacement_t: float
     buoyancy_t: float
@@ -131,7 +131,6 @@ class SemiSubResult:
     mooring_mass_t: float
     mooring_cost_musd: float
     platform_capex_musd: float
-    wtg_capex_musd: float
     foundation_capex_musd: float
     balance_of_plant_musd: float
     installation_capex_musd: float
@@ -213,6 +212,23 @@ def _component_volumes(n: int, col_dia: float, spacing: float, pontoon_w: float,
     # three pontoons forming a triangular ring; first-order screening only
     pontoon_vol = n * spacing * pontoon_w * pontoon_h
     return column_vol, pontoon_vol
+
+
+def _draft_for_displacement_volume(
+    n: int,
+    col_dia: float,
+    spacing: float,
+    pontoon_w: float,
+    pontoon_h: float,
+    displacement_volume_m3: float,
+) -> float:
+    """Estimate draft for a given displacement volume with ballast removed."""
+    column_waterplane = n * math.pi * (col_dia / 2.0) ** 2
+    pontoon_waterplane = n * spacing * pontoon_w
+    pontoon_top_volume = (column_waterplane + pontoon_waterplane) * pontoon_h
+    if displacement_volume_m3 <= pontoon_top_volume:
+        return displacement_volume_m3 / max(column_waterplane + pontoon_waterplane, 1e-6)
+    return pontoon_h + (displacement_volume_m3 - pontoon_top_volume) / max(column_waterplane, 1e-6)
 
 
 def _structural_mass_from_geometry(
@@ -412,13 +428,11 @@ def _mooring_screen(
 
 def _capex_breakdown(inputs: DesignInputs, structural_mass_t: float, ballast_t: float, mooring_cost_musd: float) -> dict:
     platform = (structural_mass_t * USD_PER_T_STEEL + max(0.0, ballast_t) * USD_PER_T_BALLAST) / 1_000_000.0
-    wtg = inputs.turbine_mw * USD_PER_MW_WTG / 1_000_000.0
     bop = inputs.turbine_mw * USD_PER_MW_ELECTRICAL / 1_000_000.0
     installation = (USD_INSTALL_BASE * (inputs.turbine_mw / 15.0) ** 0.55 * (inputs.water_depth_m / 200.0) ** 0.18) / 1_000_000.0
     foundation_total = platform + mooring_cost_musd + bop + installation
     return {
         "platform_capex_musd": platform,
-        "wtg_capex_musd": wtg,
         "foundation_capex_musd": foundation_total,
         "balance_of_plant_musd": bop,
         "installation_capex_musd": installation,
@@ -434,7 +448,7 @@ def _constraint_margins_from_inputs(inputs: DesignInputs, result: SemiSubResult)
         "column diameter": result.column_diameter_m / max(inputs.max_column_diameter_m, 1e-6),
         "GM": inputs.gm_min_m / max(result.gm_m, 1e-6),
         "pitch / heel": result.static_heel_deg / max(inputs.allowable_pitch_deg, 1e-6),
-        "port draft": result.draft_m / max(inputs.port_draft_limit_m, 1e-6),
+        "harbor draft": result.deballasted_draft_m / max(inputs.port_draft_limit_m, 1e-6),
         "ballast positive": ballast_positive,
         "ballast fraction": ballast_upper,
         "offset": result.offset_m / max(result.allowable_offset_m, 1e-6),
@@ -514,6 +528,14 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                         lightship_t = structural_mass + inputs.wtg_mass_t
                         ballast_t = buoyancy_t - lightship_t
                         total_mass_t = lightship_t + max(0.0, ballast_t)
+                        deballasted_draft = _draft_for_displacement_volume(
+                            template.n_columns,
+                            col_dia,
+                            spacing,
+                            pont_w,
+                            pont_h,
+                            lightship_t / RHO_SEAWATER_T_PER_M3,
+                        )
 
                         # Buoyancy centre: pontoons at pont_h/2, columns at draft/2
                         kb = (col_vol * (draft / 2.0) + pont_vol * (pont_h / 2.0)) / max(total_vol, 1e-6)
@@ -537,7 +559,7 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
 
                         gm_pass = gm >= inputs.gm_min_m
                         stability_pass = static_heel <= inputs.allowable_pitch_deg
-                        port_pass = draft <= inputs.port_draft_limit_m
+                        port_pass = deballasted_draft <= inputs.port_draft_limit_m
                         ballast_pass = ballast_t > 0 and ballast_t < 0.75 * buoyancy_t
                         column_diameter_pass = col_dia <= inputs.max_column_diameter_m
                         mooring = _mooring_screen(inputs, col_dia, spacing, draft)
@@ -556,6 +578,7 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             pontoon_width_m=pont_w,
                             pontoon_height_m=pont_h,
                             draft_m=draft,
+                            deballasted_draft_m=deballasted_draft,
                             structural_mass_t=structural_mass,
                             displacement_t=buoyancy_t,
                             buoyancy_t=buoyancy_t,
@@ -582,7 +605,6 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             mooring_mass_t=mooring["mooring_mass_t"],
                             mooring_cost_musd=mooring["mooring_cost_musd"],
                             platform_capex_musd=capex["platform_capex_musd"],
-                            wtg_capex_musd=capex["wtg_capex_musd"],
                             foundation_capex_musd=capex["foundation_capex_musd"],
                             balance_of_plant_musd=capex["balance_of_plant_musd"],
                             installation_capex_musd=capex["installation_capex_musd"],

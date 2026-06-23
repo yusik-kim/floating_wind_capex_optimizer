@@ -35,7 +35,7 @@ def failed_constraints(result) -> list[str]:
         ("column diameter", result.column_diameter_pass),
         ("GM", result.gm_pass),
         ("pitch / heel", result.stability_pass),
-        ("port draft", result.port_pass),
+        ("harbor draft", result.port_pass),
         ("offset", result.offset_pass),
         ("mooring strength", result.mooring_pass),
         ("ballast", result.ballast_pass),
@@ -43,13 +43,13 @@ def failed_constraints(result) -> list[str]:
     return [name for name, passed in checks if not passed]
 
 
-def constraint_margins_for_ui(result, gm_min_m, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit):
+def constraint_margins_for_ui(result, gm_min_m, harbor_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit):
     ballast_positive = 0.0 if result.ballast_t > 0 else 1.0 + abs(result.ballast_t) / max(result.buoyancy_t, 1.0)
     return {
         "column diameter": (result.column_diameter_m / max(max_column_diameter_m, 1e-6), f"increase max column diameter above {result.column_diameter_m:.1f} m"),
         "GM": (gm_min_m / max(result.gm_m, 1e-6), f"reduce minimum GM below {result.gm_m:.2f} m or allow larger geometry"),
         "pitch / heel": (result.static_heel_deg / max(result.allowable_pitch_deg, 1e-6), f"increase pitch limit above {result.static_heel_deg:.1f} deg or allow larger geometry"),
-        "port draft": (result.draft_m / max(port_draft_limit_m, 1e-6), f"increase port draft limit above {result.draft_m:.1f} m"),
+        "harbor draft": (result.deballasted_draft_m / max(harbor_draft_limit_m, 1e-6), f"increase harbor draft limit above {result.deballasted_draft_m:.1f} m"),
         "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
         "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
         "offset": (result.offset_m / max(result.allowable_offset_m, 1e-6), f"increase offset limit above {result.offset_m:.1f} m"),
@@ -57,11 +57,11 @@ def constraint_margins_for_ui(result, gm_min_m, port_draft_limit_m, max_column_d
     }
 
 
-def most_restrictive_message(result, gm_min_m, port_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit) -> str:
+def most_restrictive_message(result, gm_min_m, harbor_draft_limit_m, max_column_diameter_m, mooring_line_count, mooring_safety_factor, mooring_utilization_limit) -> str:
     margins = constraint_margins_for_ui(
         result,
         gm_min_m,
-        port_draft_limit_m,
+        harbor_draft_limit_m,
         max_column_diameter_m,
         mooring_line_count,
         mooring_safety_factor,
@@ -126,7 +126,7 @@ def platform_top_svg(result) -> str:
     """
 
 
-def platform_side_svg(result, max_column_diameter_m: float, port_draft_limit_m: float) -> str:
+def platform_side_svg(result, max_column_diameter_m: float, harbor_draft_limit_m: float) -> str:
     width, height = 560, 360
     water_y = 202
     keel_y = 304
@@ -176,8 +176,8 @@ def platform_side_svg(result, max_column_diameter_m: float, port_draft_limit_m: 
       <line class="dim" x1="{x1:.1f}" y1="{keel_y+28:.1f}" x2="{x2:.1f}" y2="{keel_y+28:.1f}" />
       <text class="label" x="{width/2-28:.1f}" y="{keel_y+45:.1f}">{result.column_spacing_m:.1f} m</text>
       <line class="dim" x1="{x2+42:.1f}" y1="{water_y:.1f}" x2="{x2+42:.1f}" y2="{keel_y:.1f}" />
-      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2-4:.1f}">{result.draft_m:.1f} m draft</text>
-      <text class="small" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+14:.1f}">limit {port_draft_limit_m:.1f} m</text>
+      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2-4:.1f}">{result.draft_m:.1f} m operation</text>
+      <text class="small" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+14:.1f}">harbor {result.deballasted_draft_m:.1f} m <= {harbor_draft_limit_m:.1f} m</text>
       <line class="dim" x1="{x1-col_w/2:.1f}" y1="{keel_y+10:.1f}" x2="{x1+col_w/2:.1f}" y2="{keel_y+10:.1f}" />
       <text class="label" x="{x1-col_w/2-2:.1f}" y="{keel_y+24:.1f}">{result.column_diameter_m:.1f} m</text>
       <text class="small" x="20" y="334">Side view: foundation geometry only</text>
@@ -219,12 +219,12 @@ st.markdown(
 )
 
 st.title("Floating Wind Foundation CAPEX Optimizer v0.5")
-st.caption("A concept-screening optimizer for non-experts: choose turbine size, then optimize foundation CAPEX excluding WTG supply cost.")
+st.caption("A concept-screening optimizer for non-experts: choose turbine size, then optimize foundation CAPEX.")
 
 with st.sidebar:
     st.header("Constraint")
     allowable_pitch_deg = st.number_input("Pitch limit [deg]", min_value=0.5, max_value=30.0, value=8.0, step=0.5)
-    port_draft_limit_m = st.number_input("Port draft limit [m]", min_value=1.0, max_value=120.0, value=25.0, step=1.0)
+    harbor_draft_limit_m = st.number_input("Harbor draft limit [m]", min_value=1.0, max_value=120.0, value=25.0, step=1.0)
     allowable_offset_m = st.number_input("Offset limit [m]", min_value=0.5, max_value=300.0, value=10.0, step=0.5)
     max_column_diameter_m = st.number_input("Max column diameter [m]", min_value=1.0, max_value=60.0, value=15.0, step=0.5)
     gm_min_m = st.number_input("Minimum GM [m]", min_value=0.1, max_value=30.0, value=2.0, step=0.1)
@@ -252,7 +252,7 @@ base_inputs = design_inputs_from_turbine(
     turbine_mw=turbine_mw,
     water_depth_m=water_depth_m,
     tp_s=tp_s,
-    port_draft_limit_m=port_draft_limit_m,
+    port_draft_limit_m=harbor_draft_limit_m,
     gm_min_m=gm_min_m,
     allowable_pitch_deg=allowable_pitch_deg,
     mooring_line_count=mooring_line_count,
@@ -265,7 +265,7 @@ base_inputs = design_inputs_from_turbine(
 
 optimized_result = optimize_capex(base_inputs, False, False, False, False)
 result = optimized_result
-status = "PASS" if result.overall_pass else "CHECK"
+status = "PASS" if result.overall_pass else "NOT PASS"
 capex_label = "Minimum Foundation CAPEX" if result.overall_pass else "Best Available Foundation CAPEX"
 
 c1, c2, c3 = st.columns([1.2, 1, 1])
@@ -280,7 +280,7 @@ if not result.overall_pass:
     relax = most_restrictive_message(
         result,
         gm_min_m,
-        port_draft_limit_m,
+        harbor_draft_limit_m,
         max_column_diameter_m,
         mooring_line_count,
         mooring_safety_factor,
@@ -294,7 +294,7 @@ if not result.overall_pass:
 st.subheader("Key Results")
 l1, l2, l3, l4 = st.columns(4)
 l1.metric("WTG capacity", compact_number(result.turbine_mw, "MW"))
-l2.metric("Draft", compact_number(result.draft_m, "m"), f"limit {port_draft_limit_m:.1f} m")
+l2.metric("Operation draft", compact_number(result.draft_m, "m"), f"harbor {result.deballasted_draft_m:.1f} m / limit {harbor_draft_limit_m:.1f} m")
 l3.metric("Pitch / heel", compact_number(result.static_heel_deg, "deg"), f"limit {result.allowable_pitch_deg:.1f} deg")
 l4.metric("Offset", compact_number(result.offset_m, "m"), f"limit {result.allowable_offset_m:.1f} m")
 
@@ -304,7 +304,7 @@ d1, d2 = st.columns(2)
 with d1:
     st.markdown(platform_top_svg(result), unsafe_allow_html=True)
 with d2:
-    st.markdown(platform_side_svg(result, max_column_diameter_m, port_draft_limit_m), unsafe_allow_html=True)
+    st.markdown(platform_side_svg(result, max_column_diameter_m, harbor_draft_limit_m), unsafe_allow_html=True)
 
 st.subheader("CAPEX Breakdown")
 costs = pd.DataFrame(
@@ -313,8 +313,7 @@ costs = pd.DataFrame(
         ["Mooring and anchors", result.mooring_cost_musd],
         ["Electrical / balance of plant", result.balance_of_plant_musd],
         ["Installation", result.installation_capex_musd],
-        ["Foundation CAPEX excl. WTG supply", result.total_capex_musd],
-        ["WTG supply shown separately", result.wtg_capex_musd],
+        ["Foundation CAPEX", result.total_capex_musd],
     ],
     columns=["Item", "USD million"],
 )
@@ -325,7 +324,8 @@ comparison = pd.DataFrame(
     [
         ["Column spacing", result.column_spacing_m, "m"],
         ["Column diameter", result.column_diameter_m, "m"],
-        ["Draft", result.draft_m, "m"],
+        ["Operation draft", result.draft_m, "m"],
+        ["Deballasted harbor draft", result.deballasted_draft_m, "m"],
         ["Pontoon width", result.pontoon_width_m, "m"],
         ["Pontoon height", result.pontoon_height_m, "m"],
         ["Foundation CAPEX", result.total_capex_musd, "USD million"],
@@ -367,6 +367,8 @@ with st.expander("Detailed engineering values"):
             ["Column height", result.column_height_m, "m"],
             ["Pontoon width", result.pontoon_width_m, "m"],
             ["Pontoon height", result.pontoon_height_m, "m"],
+            ["Operation draft", result.draft_m, "m"],
+            ["Deballasted harbor draft", result.deballasted_draft_m, "m"],
             ["Structural mass", result.structural_mass_t, "t"],
             ["Ballast", result.ballast_t, "t"],
             ["GM", result.gm_m, "m"],

@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Scope
 
-This report explains the engineering methods implemented in the current Floating Wind Foundation CAPEX Optimizer. The tool is intended for early concept screening of a generic three-column semi-submersible floating wind platform. It estimates platform geometry, displacement, ballast, static stability, mooring offset, mooring cost, and foundation CAPEX excluding WTG supply cost.
+This report explains the engineering methods implemented in the current Floating Wind Foundation CAPEX Optimizer. The tool is intended for early concept screening of a generic three-column semi-submersible floating wind platform. It estimates platform geometry, displacement, ballast, static stability, mooring offset, mooring cost, and foundation CAPEX.
 
 The methods are concept-level correlations. They are not a replacement for hydrostatic software, coupled time-domain analysis, detailed mooring design, structural design, FEED, class approval, or certification.
 
@@ -25,7 +25,7 @@ The primary user-controlled variables are:
 | `allowable_pitch_deg` | Allowable static pitch / heel angle |
 | `allowable_offset_pct_depth` | Allowable horizontal offset. The UI presents this in meters and converts it internally to percent of water depth |
 | `water_depth_m` | Site water depth |
-| `port_draft_limit_m` | Maximum allowable draft for port / tow-out |
+| `harbor_draft_limit_m` | Maximum allowable harbor draft in the deballasted tow-out condition |
 | `max_column_diameter_m` | Maximum allowed column diameter, default 15 m |
 | `mooring_utilization_limit` | Maximum allowable mooring strength utilization, default 0.45 |
 
@@ -88,8 +88,8 @@ The calculation starts from a generic 15 MW three-column semi-submersible templa
 | Column height | 34 m |
 | Pontoon width | 10 m |
 | Pontoon height | 8 m |
-| Draft | 20 m |
-| Structural mass | 6500 t |
+| Operation draft | 20 m |
+| Structural mass | 4000 t |
 | Structural CoG above keel | 11 m |
 
 The platform is represented as:
@@ -141,7 +141,7 @@ The optimizer now varies explicit foundation design variables rather than a sing
 ```text
 column_spacing
 column_diameter
-draft
+operation_draft
 pontoon_width
 pontoon_height
 ```
@@ -151,7 +151,7 @@ The turbine-based scale `s` is used only to define a reasonable search center ar
 ```text
 base_column_diameter = reference_column_diameter * s
 base_column_spacing  = reference_column_spacing  * s
-base_draft           = reference_draft           * s
+base_operation_draft = reference_operation_draft * s
 base_pontoon_width   = reference_pontoon_width   * s
 base_pontoon_height  = reference_pontoon_height  * s
 ```
@@ -161,19 +161,19 @@ The search then explores discrete candidate values around those base dimensions.
 ```text
 column_diameter = base_column_diameter * diameter_multiplier
 column_spacing  = base_column_spacing  * spacing_multiplier
-draft           = base_draft           * draft_multiplier
+operation_draft = base_operation_draft * draft_multiplier
 pontoon_width   = base_pontoon_width   * pontoon_width_multiplier
 pontoon_height  = base_pontoon_height  * pontoon_height_multiplier
 ```
 
-Column total height is set from draft plus a fixed scaled freeboard:
+Column total height is set from operation draft plus a fixed scaled freeboard:
 
 ```text
-freeboard = max(2.0, (reference_column_height - reference_draft) * s)
-column_height = draft + freeboard
+freeboard = max(2.0, (reference_column_height - reference_operation_draft) * s)
+column_height = operation_draft + freeboard
 ```
 
-This means reducing draft also reduces total column height and steel cost. The dry column above still exists for freeboard, but it does not grow artificially when draft is reduced.
+This means reducing operation draft also reduces total column height and steel cost. The dry column above still exists for freeboard, but it does not grow artificially when operation draft is reduced.
 
 ## 7. Structural Mass Estimate
 
@@ -214,7 +214,7 @@ Each column is modeled as a vertical cylinder:
 
 ```text
 column_volume =
-    n_columns * pi * (column_diameter / 2)^2 * draft
+    n_columns * pi * (column_diameter / 2)^2 * operation_draft
 ```
 
 ### 8.2 Pontoon Volume
@@ -274,6 +274,57 @@ ballast_pass = ballast_t > 0 and ballast_t < 0.75 * buoyancy_t
 
 This avoids candidates with negative ballast or excessive ballast fraction.
 
+## 9.1 Deballasted Harbor Draft
+
+The optimization draft is the operation draft, i.e. the floating draft with operating ballast included. The harbor draft constraint is checked separately in the deballasted condition, because tow-out / harbor access is governed by the lightship plus WTG state before operating ballast is added.
+
+The target deballasted displacement volume is:
+
+```text
+deballasted_volume =
+    lightship_t / rho_seawater
+```
+
+The app estimates the deballasted draft from the candidate column and pontoon geometry. If the deballasted waterline is within the pontoon height:
+
+```text
+deballasted_draft =
+    deballasted_volume
+    / (column_waterplane + pontoon_waterplane)
+```
+
+where:
+
+```text
+column_waterplane =
+    n_columns * pi * (column_diameter / 2)^2
+
+pontoon_waterplane =
+    n_columns * column_spacing * pontoon_width
+```
+
+If the pontoons are fully submerged in the deballasted condition:
+
+```text
+deballasted_draft =
+    pontoon_height
+    + (deballasted_volume - pontoon_top_volume)
+      / column_waterplane
+```
+
+where:
+
+```text
+pontoon_top_volume =
+    (column_waterplane + pontoon_waterplane) * pontoon_height
+```
+
+The harbor draft pass criterion is:
+
+```text
+deballasted_draft <= harbor_draft_limit
+```
+
 ## 10. Center of Buoyancy
 
 The vertical center of buoyancy is estimated by volume-weighted averaging.
@@ -281,7 +332,7 @@ The vertical center of buoyancy is estimated by volume-weighted averaging.
 For columns:
 
 ```text
-column_KB = draft / 2
+column_KB = operation_draft / 2
 ```
 
 For pontoons:
@@ -335,7 +386,7 @@ BM = I_wp / total_volume
 The platform structural CoG is estimated from the candidate column height, but limited so it remains below the main submerged body:
 
 ```text
-structural_cog = min(0.45 * column_height, 0.80 * draft)
+structural_cog = min(0.45 * column_height, 0.80 * operation_draft)
 ```
 
 Ballast is assumed low in the pontoon region:
@@ -415,7 +466,7 @@ The restoring-to-heeling ratio is:
 restoring_ratio = restoring_moment / heeling_moment
 ```
 
-The ratio is reported as an engineering diagnostic. It is not a separate optimization constraint in the current app; feasibility is governed by the static heel angle, GM, draft, column diameter, ballast, offset, and mooring utilization constraints.
+The ratio is reported as an engineering diagnostic. It is not a separate optimization constraint in the current app; feasibility is governed by the static heel angle, GM, deballasted harbor draft, column diameter, ballast, offset, and mooring utilization constraints.
 
 ## 16. Static Heel Angle
 
@@ -512,7 +563,7 @@ The lightest chain that satisfies both offset and strength utilization is select
 The current app does not ask the user to define anchor coordinates or line length. Therefore, the model still needs two layout assumptions:
 
 ```text
-fairlead_height = water_depth - draft
+fairlead_height = water_depth - operation_draft
 anchor_radius = max(3 * water_depth, 2 * column_spacing)
 line_length = 1.02 * sqrt(anchor_radius^2 + fairlead_height^2)
 ```
@@ -687,13 +738,6 @@ platform_capex =
     / 1,000,000
 ```
 
-WTG supply cost is:
-
-```text
-wtg_capex =
-    turbine_mw * USD_PER_MW_WTG / 1,000,000
-```
-
 Electrical / balance of plant cost is:
 
 ```text
@@ -711,7 +755,7 @@ installation_capex =
     / 1,000,000
 ```
 
-Foundation CAPEX, excluding WTG supply cost, is:
+Foundation CAPEX is:
 
 ```text
 foundation_capex =
@@ -728,14 +772,7 @@ capex_per_mw =
     foundation_capex / turbine_mw
 ```
 
-WTG supply cost is still calculated for information:
-
-```text
-wtg_capex =
-    turbine_mw * USD_PER_MW_WTG / 1,000,000
-```
-
-but it is not included in the optimization objective. All CAPEX outputs are in million USD.
+Turbine supply cost is outside the cost model and is not calculated, displayed, exported, or included in the optimization objective. All CAPEX outputs are in million USD.
 
 ## 23. Feasibility Constraints
 
@@ -750,7 +787,7 @@ stability_pass = static_heel_deg <= allowable_pitch_deg
 ```
 
 ```text
-port_pass = draft <= port_draft_limit
+port_pass = deballasted_draft <= harbor_draft_limit
 ```
 
 ```text
@@ -803,7 +840,7 @@ minimize foundation_capex
 subject to overall_pass = True
 ```
 
-This means a lower-cost candidate is not allowed to win if it violates GM, pitch, draft, ballast, column diameter, offset, or mooring constraints.
+This means a lower-cost candidate is not allowed to win if it violates GM, pitch, deballasted harbor draft, ballast, column diameter, offset, or mooring constraints.
 
 If no feasible candidate exists in the searched geometry range, the function returns a diagnostic candidate. This fallback is not called a feasible optimum. It is selected by the smallest physical violation margin so the UI can explain which constraint is blocking feasibility.
 
@@ -829,13 +866,13 @@ The top-level optimizer searches foundation design variables:
 | --- | --- |
 | Column spacing | Hydrostatic restoring and pontoon length |
 | Column diameter | Buoyancy, waterplane area, and fabrication constraint |
-| Draft | Displacement and port constraint |
+| Operation draft | Operating displacement and steel mass |
 | Pontoon width | Submerged volume and steel mass |
 | Pontoon height | Submerged volume, ballast location, and steel mass |
 
 WTG capacity is selected by the user and is not optimized. The selected WTG capacity is still used to derive rotor diameter, mass, CoG and maximum thrust from the WTG table.
 
-Pitch limit, offset limit, draft limit, GM, column diameter limit, and mooring utilization limit are project constraints. The user can change these constraints with sidebar numeric inputs, but the optimizer does not treat them as design variables.
+Pitch limit, offset limit, harbor draft limit, GM, column diameter limit, and mooring utilization limit are project constraints. The user can change these constraints with sidebar numeric inputs, but the optimizer does not treat them as design variables. The harbor draft limit is checked against the calculated deballasted draft, not the operation draft.
 
 For each candidate combination:
 
@@ -864,7 +901,7 @@ The optimizer should be interpreted as an early screening tool. It helps answer 
 
 - How does foundation CAPEX change if the turbine size changes?
 - How much does stricter offset limit increase mooring cost?
-- Does a draft or column diameter constraint force a larger or more expensive design?
+- Does a harbor draft or column diameter constraint force a larger or more expensive design?
 - Is the selected platform concept stable enough under simplified static checks?
 - Which physical constraint prevents a feasible design?
 

@@ -20,20 +20,20 @@ This is concept-level screening only. It is not suitable for certification or FE
 
 Module 5 uses a chain property table and a quasi-static catenary force-offset screening calculation to estimate selected line size, offset, mooring mass and indicative mooring cost.
 
-Module 6 adds a foundation CAPEX optimization workflow. WTG capacity remains a user-selected sizing input, and WTG mass, CoG and thrust are taken from the built-in WTG table. WTG supply cost is shown separately but excluded from the optimization objective.
+Module 6 adds a foundation CAPEX optimization workflow. WTG capacity remains a user-selected sizing input, and WTG mass, CoG and thrust are taken from the built-in WTG table. Turbine supply cost is outside the cost model and is not displayed.
 
 The optimizer varies five foundation design variables:
 
 1. Column spacing
 2. Column diameter
-3. Draft
+3. Operation draft
 4. Pontoon width
 5. Pontoon height
 
 The sidebar constraints remain fixed project inputs that the user can edit directly:
 
 1. Pitch limit
-2. Port draft limit
+2. Harbor draft limit, checked against the deballasted draft
 3. Offset limit
 4. Maximum column diameter
 5. Minimum GM
