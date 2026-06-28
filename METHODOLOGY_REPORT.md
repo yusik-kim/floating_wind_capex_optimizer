@@ -491,6 +491,20 @@ KG =
     / total_mass
 ```
 
+For the Platform Properties table, the platform-only center of gravity excludes the WTG:
+
+```text
+platform_KG =
+    (structural_mass * structural_cog
+     + interface_mass * interface_cog
+     + fixed_ballast * fixed_ballast_cog
+     + fluid_ballast * fluid_ballast_cog)
+    / platform_mass
+
+platform_VCG_from_SWL = platform_KG - operation_draft
+platform_VCB_from_SWL = KB - operation_draft
+```
+
 ## 13. Static Stability
 
 The metacentric height is:

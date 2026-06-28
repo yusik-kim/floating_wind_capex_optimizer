@@ -400,6 +400,22 @@ comparison = pd.DataFrame(
 )
 st.dataframe(comparison, hide_index=True, width="stretch")
 
+st.subheader("Platform Properties")
+platform_kg = getattr(result, "platform_kg_m", result.kg_m)
+platform_properties = pd.DataFrame(
+    [
+        ["Hull displacement", "m^3", f"{result.buoyancy_t / engine_module.RHO_SEAWATER_T_PER_M3:,.0f}"],
+        ["Hull steel mass", "t", f"{result.structural_mass_t:,.0f}"],
+        ["Fluid ballast mass", "t", f"{getattr(result, 'fluid_ballast_t', result.ballast_t):,.0f}"],
+        ["Draft", "m", f"{operation_draft:.2f}"],
+        ["Freeboard", "m", f"{max(0.0, result.column_height_m - operation_draft):.2f}"],
+        ["Vertical center of gravity from SWL", "m", f"{platform_kg - operation_draft:.2f}"],
+        ["Vertical center of buoyancy from SWL", "m", f"{result.kb_m - operation_draft:.2f}"],
+    ],
+    columns=["Parameter", "Units", "Value"],
+)
+st.dataframe(platform_properties, hide_index=True, width="stretch")
+
 with st.expander("WTG capacity relation used for sizing loads"):
     turbine_table = pd.DataFrame(TURBINE_LIBRARY)
     turbine_table = turbine_table.rename(

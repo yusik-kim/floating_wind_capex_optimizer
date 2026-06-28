@@ -125,6 +125,8 @@ class SemiSubResult:
     pontoon_volume_m3: float
     fluid_ballast_fill_fraction: float
     mooring_vertical_load_t: float
+    platform_mass_t: float
+    platform_kg_m: float
     displacement_t: float
     buoyancy_t: float
     ballast_t: float
@@ -666,12 +668,22 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             pont_h * 0.5,
                         )
                         interface_cog = col_height
-                        kg_num = (
+                        platform_mass_t = (
+                            structural_mass
+                            + interface_mass_t
+                            + max(0.0, fixed_ballast_t)
+                            + max(0.0, fluid_ballast_t)
+                        )
+                        platform_kg_num = (
                             structural_mass * structural_cog
                             + interface_mass_t * interface_cog
-                            + inputs.wtg_mass_t * inputs.wtg_cog_above_keel_m
                             + max(0.0, fixed_ballast_t) * fixed_ballast_cog
                             + max(0.0, fluid_ballast_t) * fluid_ballast_cog
+                        )
+                        platform_kg = platform_kg_num / max(platform_mass_t, 1e-6)
+                        kg_num = (
+                            platform_kg_num
+                            + inputs.wtg_mass_t * inputs.wtg_cog_above_keel_m
                         )
                         kg = kg_num / max(total_mass_t, 1e-6)
                         gm = kb + bm - kg
@@ -724,6 +736,8 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             pontoon_volume_m3=pont_vol,
                             fluid_ballast_fill_fraction=fluid_ballast_fill,
                             mooring_vertical_load_t=mooring_vertical_load_t,
+                            platform_mass_t=platform_mass_t,
+                            platform_kg_m=platform_kg,
                             displacement_t=buoyancy_t,
                             buoyancy_t=buoyancy_t,
                             ballast_t=ballast_t,
