@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Scope
 
-This report explains the engineering methods implemented in the current Floating Wind Foundation CAPEX Optimizer. The tool is intended for early concept screening of a generic three-column semi-submersible floating wind platform. It estimates platform geometry, displacement, ballast, static stability, mooring offset, mooring cost, and foundation CAPEX.
+This report explains the engineering methods implemented in the current Floating Wind Foundation CAPEX Optimizer. The tool is intended for early concept screening of a semi-submersible floating wind platform anchored to the published UMaine VolturnUS-S 15 MW reference design. It estimates platform geometry, displacement, ballast, static stability, mooring offset, mooring cost, and foundation CAPEX.
 
 The methods are concept-level correlations. They are not a replacement for hydrostatic software, coupled time-domain analysis, detailed mooring design, structural design, FEED, class approval, or certification.
 
@@ -76,27 +76,40 @@ This gives the platform model internally consistent turbine inputs without requi
 
 ## 4. Semi-Submersible Reference Template
 
-The calculation starts from a generic 15 MW three-column semi-submersible template:
+The calculation starts from the UMaine VolturnUS-S platform defined in NREL/TP-5000-76773:
 
 | Parameter | Reference value |
 | --- | ---: |
 | Reference turbine | 15 MW |
 | Reference rotor diameter | 240 m |
-| Number of columns | 3 |
-| Column diameter | 12 m |
-| Column spacing | 72 m |
-| Column height | 34 m |
-| Pontoon width | 10 m |
-| Pontoon height | 8 m |
+| Radial columns | 3 |
+| Radial column diameter | 12.5 m |
+| Central tower-support column | 1 |
+| Central column diameter | 10.0 m |
+| Radial column spacing from tower axis | 51.75 m |
+| Column height | 35 m |
+| Bottom pontoon width | 12.5 m |
+| Bottom pontoon height | 7.0 m |
+| Upper radial strut diameter | 0.91 m |
 | Operation draft | 20 m |
-| Structural mass | 4000 t |
-| Structural CoG above keel | 11 m |
+| Freeboard | 15 m |
+| Hull displacement | 20,206 m3 |
+| Hull steel mass | 3,914 t |
+| Fixed ballast mass | 2,540 t |
+| Fluid ballast mass | 11,300 t |
+| Tower interface mass | 100 t |
+| Total platform mass | 17,854 t |
 
 The platform is represented as:
 
-- three vertical circular columns
-- three rectangular pontoons forming a triangular ring
-- low ballast in the pontoon region
+- three radial buoyancy columns
+- one central tower-support column
+- three rectangular bottom pontoons connecting the center to the radial columns
+- three upper radial struts included in the structural mass proxy
+- fixed ballast at the base of the radial columns
+- seawater ballast in the bottom pontoons
+
+The WTG tower is installed on the central column. The reference values above are reproduced in the app for traceability. Candidate geometries are scaled around this baseline and remain concept-level approximations.
 
 ## 5. Platform Scaling in `evaluate_semisub`
 
@@ -177,23 +190,28 @@ This means reducing operation draft also reduces total column height and steel c
 
 ## 7. Structural Mass Estimate
 
-Structural mass is estimated from a simple geometry proxy based on column shell area and pontoon member size.
+Structural mass is estimated from a geometry proxy based on the radial-column shells, central-column shell, pontoon member size, and upper struts.
 
 ```text
 reference_proxy =
-    n_columns * pi * reference_column_diameter * reference_column_height
-    + n_columns * reference_spacing * 2 * (reference_pontoon_width + reference_pontoon_height)
+    3 * pi * reference_outer_diameter * reference_column_height
+    + pi * reference_central_diameter * reference_column_height
+    + 3 * reference_spacing
+        * 2 * (reference_pontoon_width + reference_pontoon_height)
+    + 3 * pi * reference_strut_diameter * reference_spacing
 ```
 
 ```text
 candidate_proxy =
-    n_columns * pi * column_diameter * column_height
-    + n_columns * column_spacing * 2 * (pontoon_width + pontoon_height)
+    3 * pi * outer_diameter * column_height
+    + pi * central_diameter * column_height
+    + 3 * radial_spacing * 2 * (pontoon_width + pontoon_height)
+    + 3 * pi * strut_diameter * radial_spacing
 ```
 
 ```text
 structural_mass =
-    reference_structural_mass
+    3914 t
     * (candidate_proxy / reference_proxy)^1.08
 ```
 
@@ -210,26 +228,53 @@ This is a concept estimate only. It does not include scantlings, fatigue reinfor
 
 ### 8.1 Column Volume
 
-Each column is modeled as a vertical cylinder:
+The three radial columns and one central column are modeled as vertical cylinders:
 
 ```text
-column_volume =
-    n_columns * pi * (column_diameter / 2)^2 * operation_draft
+radial_column_volume =
+    3 * pi * (outer_diameter / 2)^2 * operation_draft
+
+central_column_volume =
+    pi * (central_diameter / 2)^2 * operation_draft
 ```
 
-### 8.2 Pontoon Volume
+The central-column diameter retains the VolturnUS-S diameter ratio:
 
-The pontoons are modeled as rectangular volumes:
+```text
+central_diameter = outer_diameter * (10.0 / 12.5)
+```
+
+### 8.2 Pontoon Volume and Reference Calibration
+
+Using full centerline lengths for all three rectangular pontoons would double-count the column-pontoon intersections. The app therefore calibrates an effective pontoon factor to the published `20,206 m3` reference displacement:
+
+```text
+f_pontoon =
+    (20206 - reference_radial_column_volume
+           - reference_central_column_volume)
+    / (3 * 51.75 * 12.5 * 7.0)
+
+f_pontoon = 0.829784
+```
+
+For a candidate:
 
 ```text
 pontoon_volume =
-    n_columns * column_spacing * pontoon_width * pontoon_height
+    3 * radial_spacing * pontoon_width
+    * min(operation_draft, pontoon_height)
+    * f_pontoon
 ```
+
+This makes the reference geometry reproduce the published displacement exactly while avoiding the original centerline-box double counting.
 
 ### 8.3 Total Displaced Volume
 
 ```text
-total_volume = column_volume + pontoon_volume
+total_volume =
+    radial_column_volume
+    + central_column_volume
+    + pontoon_volume
 ```
 
 ### 8.4 Buoyancy / Displacement
@@ -246,43 +291,87 @@ the buoyant displacement is:
 buoyancy_t = total_volume * rho_seawater
 ```
 
-## 9. Lightship, Ballast, and Total Mass
+## 9. Lightship, Fixed Ballast, Fluid Ballast, and Total Mass
 
-The lightship mass is:
+VolturnUS-S has two distinct ballast types. Fixed iron-ore-concrete ballast remains at the base of the three radial columns. Fluid seawater ballast is carried in the bottom pontoons and can be removed for harbor operations.
 
-```text
-lightship_t = structural_mass_t + wtg_mass_t
-```
-
-The required ballast is calculated from hydrostatic equilibrium:
+The unballasted mass before either ballast component is:
 
 ```text
-ballast_t = buoyancy_t - lightship_t
+unballasted_mass_t =
+    structural_mass_t
+    + tower_interface_mass_t
+    + wtg_mass_t
 ```
 
-The total floating mass is:
+Required total ballast follows hydrostatic equilibrium:
 
 ```text
-total_mass_t = lightship_t + max(0, ballast_t)
+required_ballast_t =
+    buoyancy_t
+    - unballasted_mass_t
+    - operational_mooring_vertical_load_equivalent_t
 ```
 
-The ballast check is:
+The reference report gives a downward mooring vertical load and rounded mass properties. To make the published `20,206 m3` displacement and `17,854 t` platform mass close exactly at the reference point, the app derives the reference equivalent load from the published balance:
 
 ```text
-ballast_pass = ballast_t > 0 and ballast_t < 0.75 * buoyancy_t
+reference_mooring_vertical_load_equivalent_t =
+    20206 * 1.025
+    - 17854
+    - 2254
+
+reference_mooring_vertical_load_equivalent_t = 603.15 t
 ```
 
-This avoids candidates with negative ballast or excessive ballast fraction.
+For scaled candidates this reference load is scaled with characteristic area. It is included only in the operational vertical force balance; it is removed in the unmoored harbor/tow condition. NREL/TP-5000-76773 separately reports `6,065 kN` mooring vertical pretension; the small difference is consistent with rounded published displacement and component masses.
+
+The fixed ballast target is scaled from the `2,540 t` reference value with candidate displaced volume. Fluid ballast supplies the remaining requirement:
+
+```text
+fixed_ballast_t =
+    min(scaled_fixed_ballast_target, max(0, required_ballast_t))
+
+fluid_ballast_t =
+    required_ballast_t - fixed_ballast_t
+
+total_ballast_t = fixed_ballast_t + fluid_ballast_t
+```
+
+Fluid ballast volume and pontoon fill fraction are:
+
+```text
+fluid_ballast_volume =
+    max(0, fluid_ballast_t) / rho_seawater
+
+fluid_ballast_fill_fraction =
+    fluid_ballast_volume / pontoon_volume
+```
+
+The ballast check requires:
+
+```text
+fluid_ballast_t >= 0
+total_ballast_t < 0.75 * buoyancy_t
+fluid_ballast_fill_fraction <= 1.0
+```
+
+The final condition prevents the optimizer from assigning more seawater ballast than the modeled pontoon volume can contain.
 
 ## 9.1 Deballasted Harbor Draft
 
-The optimization draft is the operation draft, i.e. the floating draft with operating ballast included. The harbor draft constraint is checked separately in the deballasted condition, because tow-out / harbor access is governed by the lightship plus WTG state before operating ballast is added.
+The optimization draft is the operation draft, i.e. the floating draft with both fixed and fluid ballast included. The harbor draft constraint is checked after removing only the fluid seawater ballast. Fixed ballast remains aboard.
 
 The target deballasted displacement volume is:
 
 ```text
-deballasted_volume =
-    lightship_t / rho_seawater
+harbor_mass_t =
+    structural_mass_t
+    + tower_interface_mass_t
+    + wtg_mass_t
+    + fixed_ballast_t
+
+deballasted_volume = harbor_mass_t / rho_seawater
 ```
 
 The app estimates the deballasted draft from the candidate column and pontoon geometry. If the deballasted waterline is within the pontoon height:
@@ -297,10 +386,11 @@ where:
 
 ```text
 column_waterplane =
-    n_columns * pi * (column_diameter / 2)^2
+    3 * pi * (outer_diameter / 2)^2
+    + pi * (central_diameter / 2)^2
 
 pontoon_waterplane =
-    n_columns * column_spacing * pontoon_width
+    3 * radial_spacing * pontoon_width * f_pontoon
 ```
 
 If the pontoons are fully submerged in the deballasted condition:
@@ -329,7 +419,7 @@ deballasted_draft <= harbor_draft_limit
 
 The vertical center of buoyancy is estimated by volume-weighted averaging.
 
-For columns:
+For the radial and central columns:
 
 ```text
 column_KB = operation_draft / 2
@@ -363,16 +453,14 @@ The local second moment of area of each circular waterplane is:
 I_local = pi * (column_diameter / 2)^4 / 4
 ```
 
-The column centers are placed on a triangular layout. The radius from platform center to each column center is:
-
-```text
-r = column_spacing / sqrt(3)
-```
+The three radial-column centers are placed `radial_spacing` from the tower axis at 120-degree intervals. The central column is at the tower axis.
 
 The waterplane second moment about the platform centerline is estimated using the parallel axis theorem:
 
 ```text
-I_wp = sum(I_local + A_col * x_i^2)
+I_wp =
+    sum_over_3_radial_columns(I_outer_local + A_outer * x_i^2)
+    + I_central_local
 ```
 
 The metacentric radius is:
@@ -383,25 +471,23 @@ BM = I_wp / total_volume
 
 ## 12. Center of Gravity
 
-The platform structural CoG is estimated from the candidate column height, but limited so it remains below the main submerged body:
+The component CoGs are anchored to the VolturnUS-S mass arrangement:
 
-```text
-structural_cog = min(0.45 * column_height, 0.80 * operation_draft)
-```
-
-Ballast is assumed low in the pontoon region:
-
-```text
-ballast_cog = 0.45 * pontoon_height
-```
+- structural steel CoG: `12.12 m` above keel at reference scale
+- fixed ballast CoG: `1.50 m` above keel
+- fluid ballast CoG: `3.15 m` above keel, limited to half the candidate pontoon height
+- tower interface CoG: column top
+- WTG CoG: turbine table value
 
 The combined center of gravity is:
 
 ```text
 KG =
     (structural_mass * structural_cog
+     + interface_mass * interface_cog
      + wtg_mass * wtg_cog
-     + max(0, ballast) * ballast_cog)
+     + fixed_ballast * fixed_ballast_cog
+     + fluid_ballast * fluid_ballast_cog)
     / total_mass
 ```
 
@@ -792,8 +878,9 @@ port_pass = deballasted_draft <= harbor_draft_limit
 
 ```text
 ballast_pass =
-    ballast > 0
-    and ballast < 0.75 * buoyancy
+    fluid_ballast >= 0
+    and total_ballast < 0.75 * buoyancy
+    and fluid_ballast_volume <= pontoon_volume
 ```
 
 ```text
@@ -864,8 +951,8 @@ The top-level optimizer searches foundation design variables:
 
 | Design variable | Role |
 | --- | --- |
-| Column spacing | Hydrostatic restoring and pontoon length |
-| Column diameter | Buoyancy, waterplane area, and fabrication constraint |
+| Radial column spacing | Hydrostatic restoring and pontoon length |
+| Outer column diameter | Buoyancy, waterplane area, and fabrication constraint; central diameter retains the 10/12.5 reference ratio |
 | Operation draft | Operating displacement and steel mass |
 | Pontoon width | Submerged volume and steel mass |
 | Pontoon height | Submerged volume, ballast location, and steel mass |
@@ -934,9 +1021,13 @@ The next technical improvements should be:
 3. Add platform motion constraints, especially pitch natural period and pitch response.
 4. Add LCOE or revenue-adjusted metrics as alternative objectives, because foundation CAPEX alone does not capture energy production value.
 5. Add multiple platform templates: semi-sub, spar, TLP, barge.
-6. Add calibration cases from public reference platforms.
+6. Add calibration cases from additional public reference platforms.
 
 ## 29. References
+
+The platform layout, dimensions, displacement, draft, freeboard, structural mass, fixed ballast, fluid ballast, and tower-interface mass are taken from:
+
+- Allen, C. et al. (2020), *Definition of the UMaine VolturnUS-S Reference Platform Developed for the IEA Wind 15-Megawatt Offshore Reference Wind Turbine*, NREL/TP-5000-76773: https://www.nrel.gov/docs/fy20osti/76773.pdf
 
 The catenary force-offset calculation is based on standard static catenary relations for a flexible line under uniform self-weight:
 

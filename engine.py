@@ -1,5 +1,5 @@
 """
-Floating Wind Foundation CAPEX Optimizer v0.5
+Floating Wind Foundation CAPEX Optimizer v0.6
 Semi-sub template modules 1-5:
 1) Template platform scaling
 2) Weight estimation
@@ -26,7 +26,7 @@ TURBINE_LIBRARY = [
     {"mw": 8.0, "rotor_diameter_m": 170.0, "hub_height_m": 115.0, "mass_t": 1150.0, "cog_m": 62.0, "thrust_mn": 1.25},
     {"mw": 10.0, "rotor_diameter_m": 190.0, "hub_height_m": 125.0, "mass_t": 1450.0, "cog_m": 68.0, "thrust_mn": 1.55},
     {"mw": 12.0, "rotor_diameter_m": 220.0, "hub_height_m": 138.0, "mass_t": 1800.0, "cog_m": 74.0, "thrust_mn": 2.05},
-    {"mw": 15.0, "rotor_diameter_m": 240.0, "hub_height_m": 150.0, "mass_t": 2200.0, "cog_m": 80.0, "thrust_mn": 2.50},
+    {"mw": 15.0, "rotor_diameter_m": 240.0, "hub_height_m": 150.0, "mass_t": 2254.0, "cog_m": 80.0, "thrust_mn": 2.50},
     {"mw": 18.0, "rotor_diameter_m": 270.0, "hub_height_m": 165.0, "mass_t": 2750.0, "cog_m": 90.0, "thrust_mn": 3.15},
     {"mw": 20.0, "rotor_diameter_m": 290.0, "hub_height_m": 175.0, "mass_t": 3200.0, "cog_m": 98.0, "thrust_mn": 3.65},
 ]
@@ -56,18 +56,29 @@ CHAIN_LIBRARY = [
 
 @dataclass
 class SemiSubTemplate:
-    name: str = "Generic 3-column semi-sub, 15 MW reference"
+    name: str = "UMaine VolturnUS-S, IEA 15 MW reference"
     ref_mw: float = 15.0
     ref_rotor_diameter_m: float = 240.0
-    n_columns: int = 3
-    column_diameter_m: float = 12.0
-    column_spacing_m: float = 72.0
-    column_height_m: float = 34.0
-    pontoon_width_m: float = 10.0
-    pontoon_height_m: float = 8.0
+    n_radial_columns: int = 3
+    column_diameter_m: float = 12.5
+    central_column_diameter_m: float = 10.0
+    column_spacing_m: float = 51.75
+    column_height_m: float = 35.0
+    pontoon_width_m: float = 12.5
+    pontoon_height_m: float = 7.0
+    upper_strut_diameter_m: float = 0.91
     draft_m: float = 20.0
-    structural_mass_t: float = 4000.0
-    structural_cog_above_keel_m: float = 11.0
+    structural_mass_t: float = 3914.0
+    fixed_ballast_mass_t: float = 2540.0
+    fluid_ballast_mass_t: float = 11300.0
+    tower_interface_mass_t: float = 100.0
+    hull_displacement_m3: float = 20206.0
+    platform_mass_t: float = 17854.0
+    reference_wtg_mass_t: float = 2254.0
+    platform_cog_above_keel_m: float = 5.06
+    structural_cog_above_keel_m: float = 12.12
+    fixed_ballast_cog_above_keel_m: float = 1.50
+    fluid_ballast_cog_above_keel_m: float = 3.15
 
 
 @dataclass
@@ -99,6 +110,7 @@ class SemiSubResult:
     allowable_pitch_deg: float
     allowable_offset_pct_depth: float
     column_diameter_m: float
+    central_column_diameter_m: float
     column_spacing_m: float
     column_height_m: float
     pontoon_width_m: float
@@ -106,6 +118,13 @@ class SemiSubResult:
     draft_m: float
     deballasted_draft_m: float
     structural_mass_t: float
+    tower_interface_mass_t: float
+    fixed_ballast_t: float
+    fluid_ballast_t: float
+    fluid_ballast_volume_m3: float
+    pontoon_volume_m3: float
+    fluid_ballast_fill_fraction: float
+    mooring_vertical_load_t: float
     displacement_t: float
     buoyancy_t: float
     ballast_t: float
@@ -207,15 +226,67 @@ def design_inputs_from_turbine(
     )
 
 
-def _component_volumes(n: int, col_dia: float, spacing: float, pontoon_w: float, pontoon_h: float, draft: float):
-    column_vol = n * math.pi * (col_dia / 2.0) ** 2 * draft
-    # three pontoons forming a triangular ring; first-order screening only
-    pontoon_vol = n * spacing * pontoon_w * pontoon_h
-    return column_vol, pontoon_vol
+def _central_column_diameter(template: SemiSubTemplate, radial_column_diameter_m: float) -> float:
+    return radial_column_diameter_m * template.central_column_diameter_m / template.column_diameter_m
+
+
+def _pontoon_volume_factor(template: SemiSubTemplate) -> float:
+    """Calibrate centerline pontoon boxes to the published reference displacement."""
+    radial_columns = (
+        template.n_radial_columns
+        * math.pi
+        * (template.column_diameter_m / 2.0) ** 2
+        * template.draft_m
+    )
+    central_column = (
+        math.pi
+        * (template.central_column_diameter_m / 2.0) ** 2
+        * template.draft_m
+    )
+    gross_pontoons = (
+        template.n_radial_columns
+        * template.column_spacing_m
+        * template.pontoon_width_m
+        * template.pontoon_height_m
+    )
+    required_pontoon_volume = template.hull_displacement_m3 - radial_columns - central_column
+    return required_pontoon_volume / max(gross_pontoons, 1e-6)
+
+
+def _component_volumes(
+    template: SemiSubTemplate,
+    col_dia: float,
+    spacing: float,
+    pontoon_w: float,
+    pontoon_h: float,
+    draft: float,
+) -> tuple[float, float, float]:
+    central_dia = _central_column_diameter(template, col_dia)
+    immersed_column_height = max(0.0, draft)
+    radial_column_vol = (
+        template.n_radial_columns
+        * math.pi
+        * (col_dia / 2.0) ** 2
+        * immersed_column_height
+    )
+    central_column_vol = (
+        math.pi
+        * (central_dia / 2.0) ** 2
+        * immersed_column_height
+    )
+    immersed_pontoon_height = min(max(0.0, draft), pontoon_h)
+    pontoon_vol = (
+        template.n_radial_columns
+        * spacing
+        * pontoon_w
+        * immersed_pontoon_height
+        * _pontoon_volume_factor(template)
+    )
+    return radial_column_vol, central_column_vol, pontoon_vol
 
 
 def _draft_for_displacement_volume(
-    n: int,
+    template: SemiSubTemplate,
     col_dia: float,
     spacing: float,
     pontoon_w: float,
@@ -223,8 +294,17 @@ def _draft_for_displacement_volume(
     displacement_volume_m3: float,
 ) -> float:
     """Estimate draft for a given displacement volume with ballast removed."""
-    column_waterplane = n * math.pi * (col_dia / 2.0) ** 2
-    pontoon_waterplane = n * spacing * pontoon_w
+    central_dia = _central_column_diameter(template, col_dia)
+    column_waterplane = (
+        template.n_radial_columns * math.pi * (col_dia / 2.0) ** 2
+        + math.pi * (central_dia / 2.0) ** 2
+    )
+    pontoon_waterplane = (
+        template.n_radial_columns
+        * spacing
+        * pontoon_w
+        * _pontoon_volume_factor(template)
+    )
     pontoon_top_volume = (column_waterplane + pontoon_waterplane) * pontoon_h
     if displacement_volume_m3 <= pontoon_top_volume:
         return displacement_volume_m3 / max(column_waterplane + pontoon_waterplane, 1e-6)
@@ -241,25 +321,35 @@ def _structural_mass_from_geometry(
 ) -> float:
     """Estimate steel mass from a simple wetted-surface / member-size proxy."""
     ref_proxy = (
-        template.n_columns * math.pi * template.column_diameter_m * template.column_height_m
-        + template.n_columns * template.column_spacing_m * 2.0 * (template.pontoon_width_m + template.pontoon_height_m)
+        template.n_radial_columns * math.pi * template.column_diameter_m * template.column_height_m
+        + math.pi * template.central_column_diameter_m * template.column_height_m
+        + template.n_radial_columns * template.column_spacing_m * 2.0 * (template.pontoon_width_m + template.pontoon_height_m)
+        + template.n_radial_columns * math.pi * template.upper_strut_diameter_m * template.column_spacing_m
     )
+    central_dia = _central_column_diameter(template, col_dia)
+    strut_dia = template.upper_strut_diameter_m * col_dia / template.column_diameter_m
     proxy = (
-        template.n_columns * math.pi * col_dia * col_height
-        + template.n_columns * spacing * 2.0 * (pontoon_w + pontoon_h)
+        template.n_radial_columns * math.pi * col_dia * col_height
+        + math.pi * central_dia * col_height
+        + template.n_radial_columns * spacing * 2.0 * (pontoon_w + pontoon_h)
+        + template.n_radial_columns * math.pi * strut_dia * spacing
     )
     return template.structural_mass_t * (proxy / max(ref_proxy, 1e-6)) ** 1.08
 
 
-def _waterplane_inertia(n: int, col_dia: float, spacing: float) -> float:
-    """Approximate waterplane second moment about platform centreline [m4]."""
+def _waterplane_inertia(template: SemiSubTemplate, col_dia: float, spacing: float) -> float:
+    """Waterplane second moment for three radial and one central column [m4]."""
     area = math.pi * (col_dia / 2.0) ** 2
     local_i = math.pi * (col_dia / 2.0) ** 4 / 4.0
-    radius = spacing / math.sqrt(3.0)
-    # column coordinates for triangular layout
-    coords = [(radius, 0.0), (-0.5 * radius, math.sqrt(3)/2 * radius), (-0.5 * radius, -math.sqrt(3)/2 * radius)]
-    # use inertia about y-axis: sum(I_local + A*x^2)
-    return sum(local_i + area * x**2 for x, _ in coords[:n])
+    coords = [
+        (spacing, 0.0),
+        (-0.5 * spacing, math.sqrt(3.0) * spacing / 2.0),
+        (-0.5 * spacing, -math.sqrt(3.0) * spacing / 2.0),
+    ]
+    radial_i = sum(local_i + area * x**2 for x, _ in coords)
+    central_dia = _central_column_diameter(template, col_dia)
+    central_i = math.pi * (central_dia / 2.0) ** 4 / 4.0
+    return radial_i + central_i
 
 
 def _catenary_horizontal_tension(
@@ -451,6 +541,7 @@ def _constraint_margins_from_inputs(inputs: DesignInputs, result: SemiSubResult)
         "harbor draft": result.deballasted_draft_m / max(inputs.port_draft_limit_m, 1e-6),
         "ballast positive": ballast_positive,
         "ballast fraction": ballast_upper,
+        "fluid ballast tank capacity": result.fluid_ballast_fill_fraction,
         "offset": result.offset_m / max(result.allowable_offset_m, 1e-6),
         "mooring strength": result.mooring_utilization / max(inputs.mooring_utilization_limit, 1e-6),
     }
@@ -483,7 +574,7 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
 
     col_dia_values = sorted({
         round(max(5.0, base_col_dia * m), 3)
-        for m in [0.75, 0.85, 0.95, 1.05, 1.15, 1.30, 1.45]
+        for m in [0.75, 0.85, 0.95, 1.00, 1.05, 1.15, 1.30, 1.45]
     })
     spacing_values = sorted({
         round(max(35.0, base_spacing * m), 3)
@@ -494,15 +585,15 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
     else:
         draft_values = sorted({
             round(max(8.0, base_draft * m), 3)
-            for m in [0.65, 0.75, 0.85, 0.95, 1.05, 1.15, 1.30, 1.45]
+            for m in [0.65, 0.75, 0.85, 0.95, 1.00, 1.05, 1.15, 1.30, 1.45]
         })
     pont_w_values = sorted({
         round(max(5.0, base_pont_w * m), 3)
-        for m in [0.75, 0.90, 1.05, 1.20, 1.40]
+        for m in [0.75, 0.90, 1.00, 1.05, 1.20, 1.40]
     })
     pont_h_values = sorted({
         round(max(4.0, base_pont_h * m), 3)
-        for m in [0.75, 0.90, 1.05, 1.20, 1.40]
+        for m in [0.75, 0.90, 1.00, 1.05, 1.20, 1.40]
     })
 
     # Minimize CAPEX over explicit geometry variables:
@@ -522,30 +613,66 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             pont_h,
                         )
 
-                        col_vol, pont_vol = _component_volumes(template.n_columns, col_dia, spacing, pont_w, pont_h, draft)
+                        central_dia = _central_column_diameter(template, col_dia)
+                        radial_col_vol, central_col_vol, pont_vol = _component_volumes(
+                            template, col_dia, spacing, pont_w, pont_h, draft
+                        )
+                        col_vol = radial_col_vol + central_col_vol
                         total_vol = col_vol + pont_vol
                         buoyancy_t = total_vol * RHO_SEAWATER_T_PER_M3
-                        lightship_t = structural_mass + inputs.wtg_mass_t
-                        ballast_t = buoyancy_t - lightship_t
-                        total_mass_t = lightship_t + max(0.0, ballast_t)
+                        geometry_scale = (
+                            total_vol / max(template.hull_displacement_m3, 1e-6)
+                        ) ** (1.0 / 3.0)
+                        fixed_ballast_t = template.fixed_ballast_mass_t * geometry_scale**3
+                        interface_mass_t = template.tower_interface_mass_t * geometry_scale**2
+                        unballasted_mass_t = structural_mass + interface_mass_t + inputs.wtg_mass_t
+                        reference_mooring_vertical_load_t = (
+                            template.hull_displacement_m3 * RHO_SEAWATER_T_PER_M3
+                            - template.platform_mass_t
+                            - template.reference_wtg_mass_t
+                        )
+                        mooring_vertical_load_t = (
+                            reference_mooring_vertical_load_t * geometry_scale**2
+                        )
+                        required_ballast_t = (
+                            buoyancy_t - unballasted_mass_t - mooring_vertical_load_t
+                        )
+                        fixed_ballast_t = min(fixed_ballast_t, max(0.0, required_ballast_t))
+                        fluid_ballast_t = required_ballast_t - fixed_ballast_t
+                        ballast_t = fixed_ballast_t + fluid_ballast_t
+                        total_mass_t = unballasted_mass_t + max(0.0, ballast_t)
+                        harbor_mass_t = unballasted_mass_t + fixed_ballast_t
                         deballasted_draft = _draft_for_displacement_volume(
-                            template.n_columns,
+                            template,
                             col_dia,
                             spacing,
                             pont_w,
                             pont_h,
-                            lightship_t / RHO_SEAWATER_T_PER_M3,
+                            harbor_mass_t / RHO_SEAWATER_T_PER_M3,
                         )
+                        fluid_ballast_volume = max(0.0, fluid_ballast_t) / RHO_SEAWATER_T_PER_M3
+                        fluid_ballast_fill = fluid_ballast_volume / max(pont_vol, 1e-6)
 
-                        # Buoyancy centre: pontoons at pont_h/2, columns at draft/2
+                        # Buoyancy centre: bottom pontoons plus the four vertical columns.
                         kb = (col_vol * (draft / 2.0) + pont_vol * (pont_h / 2.0)) / max(total_vol, 1e-6)
-                        iwp = _waterplane_inertia(template.n_columns, col_dia, spacing)
+                        iwp = _waterplane_inertia(template, col_dia, spacing)
                         bm = iwp / max(total_vol, 1e-6)
 
-                        # Mass centre: structural, WTG, ballast. Ballast assumed low in pontoon region.
-                        structural_cog = min(0.45 * col_height, draft * 0.80)
-                        ballast_cog = pont_h * 0.45
-                        kg_num = structural_mass * structural_cog + inputs.wtg_mass_t * inputs.wtg_cog_above_keel_m + max(0.0, ballast_t) * ballast_cog
+                        # VolturnUS-S fixed ballast is low in the radial columns and fluid ballast is in the pontoons.
+                        structural_cog = template.structural_cog_above_keel_m * geometry_scale
+                        fixed_ballast_cog = template.fixed_ballast_cog_above_keel_m * geometry_scale
+                        fluid_ballast_cog = min(
+                            template.fluid_ballast_cog_above_keel_m * geometry_scale,
+                            pont_h * 0.5,
+                        )
+                        interface_cog = col_height
+                        kg_num = (
+                            structural_mass * structural_cog
+                            + interface_mass_t * interface_cog
+                            + inputs.wtg_mass_t * inputs.wtg_cog_above_keel_m
+                            + max(0.0, fixed_ballast_t) * fixed_ballast_cog
+                            + max(0.0, fluid_ballast_t) * fluid_ballast_cog
+                        )
                         kg = kg_num / max(total_mass_t, 1e-6)
                         gm = kb + bm - kg
 
@@ -560,12 +687,21 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                         gm_pass = gm >= inputs.gm_min_m
                         stability_pass = static_heel <= inputs.allowable_pitch_deg
                         port_pass = deballasted_draft <= inputs.port_draft_limit_m
-                        ballast_pass = ballast_t > 0 and ballast_t < 0.75 * buoyancy_t
-                        column_diameter_pass = col_dia <= inputs.max_column_diameter_m
+                        ballast_pass = (
+                            fluid_ballast_t >= 0
+                            and ballast_t < 0.75 * buoyancy_t
+                            and fluid_ballast_fill <= 1.0
+                        )
+                        column_diameter_pass = max(col_dia, central_dia) <= inputs.max_column_diameter_m
                         mooring = _mooring_screen(inputs, col_dia, spacing, draft)
                         offset_pass = mooring["offset_pass"]
                         mooring_pass = mooring["mooring_pass"]
-                        capex = _capex_breakdown(inputs, structural_mass, ballast_t, mooring["mooring_cost_musd"])
+                        capex = _capex_breakdown(
+                            inputs,
+                            structural_mass + interface_mass_t,
+                            ballast_t,
+                            mooring["mooring_cost_musd"],
+                        )
                         overall = gm_pass and stability_pass and port_pass and ballast_pass and column_diameter_pass and offset_pass and mooring_pass
                         result = SemiSubResult(
                             template=template.name,
@@ -573,6 +709,7 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             allowable_pitch_deg=inputs.allowable_pitch_deg,
                             allowable_offset_pct_depth=inputs.allowable_offset_pct_depth,
                             column_diameter_m=col_dia,
+                            central_column_diameter_m=central_dia,
                             column_spacing_m=spacing,
                             column_height_m=col_height,
                             pontoon_width_m=pont_w,
@@ -580,6 +717,13 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             draft_m=draft,
                             deballasted_draft_m=deballasted_draft,
                             structural_mass_t=structural_mass,
+                            tower_interface_mass_t=interface_mass_t,
+                            fixed_ballast_t=fixed_ballast_t,
+                            fluid_ballast_t=fluid_ballast_t,
+                            fluid_ballast_volume_m3=fluid_ballast_volume,
+                            pontoon_volume_m3=pont_vol,
+                            fluid_ballast_fill_fraction=fluid_ballast_fill,
+                            mooring_vertical_load_t=mooring_vertical_load_t,
                             displacement_t=buoyancy_t,
                             buoyancy_t=buoyancy_t,
                             ballast_t=ballast_t,
@@ -618,7 +762,11 @@ def evaluate_semisub(inputs: DesignInputs, template: SemiSubTemplate | None = No
                             offset_pass=offset_pass,
                             mooring_pass=mooring_pass,
                             overall_pass=overall,
-                            notes="Concept-level estimate. Geometry and mooring are generated from generic semi-sub and catenary-screening correlations.",
+                            notes=(
+                                "Concept-level estimate anchored to the published UMaine VolturnUS-S "
+                                "15 MW reference geometry and masses. Candidate dimensions and mooring "
+                                "remain screening-level calculations."
+                            ),
                         )
                         if overall:
                             if feasible_best is None or result.total_capex_musd < feasible_best.total_capex_musd:

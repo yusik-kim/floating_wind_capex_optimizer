@@ -13,7 +13,7 @@ from engine import (
 )
 
 
-st.set_page_config(page_title="Floating Wind Foundation CAPEX Optimizer v0.5", layout="wide")
+st.set_page_config(page_title="Floating Wind Foundation CAPEX Optimizer v0.6", layout="wide")
 
 
 def money_musd(value: float) -> str:
@@ -61,6 +61,10 @@ def constraint_margins_for_ui(result, gm_min_m, harbor_draft_limit_m, max_column
         "harbor draft": (harbor_draft / max(harbor_draft_limit_m, 1e-6), f"increase harbor draft limit above {harbor_draft:.1f} m"),
         "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
         "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
+        "fluid ballast tank capacity": (
+            result.fluid_ballast_fill_fraction,
+            "allow larger pontoons or additional ballast tanks",
+        ),
         "offset": (result.offset_m / max(result.allowable_offset_m, 1e-6), f"increase offset limit above {result.offset_m:.1f} m"),
         "mooring strength": (result.mooring_utilization / max(mooring_utilization_limit, 1e-6), f"increase mooring allowable utilization above {result.mooring_utilization:.2f} or allow stronger mooring"),
     }
@@ -85,62 +89,81 @@ def most_restrictive_message(result, gm_min_m, harbor_draft_limit_m, max_column_
 
 def platform_top_svg(result) -> str:
     width, height = 560, 360
-    cx, cy = width / 2, height / 2
-    scale = min(2.25, 150.0 / max(result.column_spacing_m, 1.0))
-    radius = result.column_spacing_m / math.sqrt(3.0) * scale
-    col_r = max(8.0, result.column_diameter_m * scale / 2.0)
+    cx, cy = width / 2, 170
+    scale = min(3.0, 145.0 / max(result.column_spacing_m, 1.0))
+    radius = result.column_spacing_m * scale
+    outer_r = max(8.0, result.column_diameter_m * scale / 2.0)
+    central_r = max(7.0, result.central_column_diameter_m * scale / 2.0)
+    pontoon_width = max(9.0, result.pontoon_width_m * scale)
     points = [
         (cx + radius, cy),
         (cx - 0.5 * radius, cy + math.sqrt(3.0) * radius / 2.0),
         (cx - 0.5 * radius, cy - math.sqrt(3.0) * radius / 2.0),
     ]
-    arms = "".join(
+    pontoons = "".join(
+        f'<line x1="{points[i][0]:.1f}" y1="{points[i][1]:.1f}" '
+        f'x2="{cx:.1f}" y2="{cy:.1f}" />'
+        for i in range(3)
+    )
+    struts = "".join(
         f'<line x1="{points[i][0]:.1f}" y1="{points[i][1]:.1f}" '
         f'x2="{cx:.1f}" y2="{cy:.1f}" />'
         for i in range(3)
     )
     cols = "".join(
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{col_r:.1f}" />'
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{outer_r:.1f}" />'
         for x, y in points
     )
     return f"""
     <svg viewBox="0 0 {width} {height}" role="img" aria-label="Top view platform layout">
       <style>
         .bg {{ fill:#ffffff; }}
-        .arm {{ stroke:#ef4444; stroke-width:15; stroke-linecap:round; filter:url(#shadow); }}
+        .radial-pontoon {{ stroke:#ef4444; stroke-width:{pontoon_width:.1f}; stroke-linecap:butt; filter:url(#shadow); }}
+        .strut {{ stroke:#facc15; stroke-width:3; stroke-linecap:round; }}
         .column {{ fill:#ef4444; stroke:#b91c1c; stroke-width:2; }}
-        .center {{ fill:#ffffff; stroke:#ef4444; stroke-width:5; }}
+        .center {{ fill:#f8fafc; stroke:#b91c1c; stroke-width:3; }}
         .dim {{ stroke:#111827; stroke-width:1; marker-start:url(#arrow); marker-end:url(#arrow); }}
-        .thin {{ stroke:#111827; stroke-width:1; fill:none; }}
+        .extension {{ stroke:#64748b; stroke-width:1; }}
         .label {{ font: 13px system-ui, sans-serif; fill:#111827; }}
         .small {{ font: 12px system-ui, sans-serif; fill:#334155; }}
       </style>
       <defs>
-        <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
-          <path d="M0,0 L8,4 L0,8 z" fill="#111827" />
+        <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 z" fill="#111827" />
         </marker>
         <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
           <feDropShadow dx="4" dy="5" stdDeviation="3" flood-color="#000000" flood-opacity="0.22" />
         </filter>
       </defs>
       <rect class="bg" x="0" y="0" width="{width}" height="{height}" />
-      <g class="arm">{arms}</g>
+      <g class="radial-pontoon">{pontoons}</g>
+      <g class="strut">{struts}</g>
       <g class="column">{cols}</g>
-      <circle class="center" cx="{cx:.1f}" cy="{cy:.1f}" r="{max(7.0, col_r * 0.65):.1f}" />
-      <line class="dim" x1="{points[2][0]:.1f}" y1="{points[2][1]-28:.1f}" x2="{points[0][0]:.1f}" y2="{points[0][1]-28:.1f}" />
-      <text class="label" x="{(points[2][0]+points[0][0])/2-20:.1f}" y="{points[0][1]-38:.1f}">{result.column_spacing_m:.1f} m</text>
-      <text class="label" x="{points[2][0]-54:.1f}" y="{points[2][1]-8:.1f}">Dia {result.column_diameter_m:.1f} m</text>
-      <text class="small" x="20" y="334">Top view: 3-column semi-sub layout</text>
+      <circle class="center" cx="{cx:.1f}" cy="{cy:.1f}" r="{central_r:.1f}" />
+      <circle cx="{cx:.1f}" cy="{cy:.1f}" r="{max(3.0, central_r * 0.32):.1f}" fill="#334155" />
+      <line class="extension" x1="{cx:.1f}" y1="{cy+35:.1f}" x2="{cx:.1f}" y2="{cy+64:.1f}" />
+      <line class="extension" x1="{points[0][0]:.1f}" y1="{cy+35:.1f}" x2="{points[0][0]:.1f}" y2="{cy+64:.1f}" />
+      <line class="dim" x1="{cx:.1f}" y1="{cy+55:.1f}" x2="{points[0][0]:.1f}" y2="{cy+55:.1f}" />
+      <text class="label" x="{cx+radius/2-54:.1f}" y="{cy+49:.1f}">{result.column_spacing_m:.1f} m radial spacing</text>
+      <line class="dim" x1="{points[0][0]-outer_r:.1f}" y1="{cy-38:.1f}" x2="{points[0][0]+outer_r:.1f}" y2="{cy-38:.1f}" />
+      <text class="label" x="{points[0][0]-58:.1f}" y="{cy-49:.1f}">Outer dia {result.column_diameter_m:.1f} m</text>
+      <text class="label" x="{cx-112:.1f}" y="{cy-27:.1f}">Central dia {result.central_column_diameter_m:.1f} m</text>
+      <text class="small" x="{cx-42:.1f}" y="{cy-52:.1f}">WTG support</text>
+      <text class="small" x="20" y="334">Top view: VolturnUS-S four-column radial layout</text>
     </svg>
     """
 
 
 def platform_side_svg(result, max_column_diameter_m: float, harbor_draft_limit_m: float) -> str:
     width, height = 560, 360
-    water_y = 202
-    keel_y = 304
-    available_height = 220.0
-    col_scale = available_height / max(result.column_height_m, 1.0)
+    cx = width / 2
+    keel_y = 294
+    projected_radius = result.column_spacing_m * math.sqrt(3.0) / 2.0
+    col_scale = min(
+        5.2,
+        205.0 / max(result.column_height_m, 1.0),
+        218.0 / max(projected_radius + result.column_diameter_m / 2.0, 1.0),
+    )
     col_height_px = result.column_height_m * col_scale
     operation_draft = operation_draft_m(result)
     harbor_draft = harbor_draft_m(result)
@@ -148,28 +171,32 @@ def platform_side_svg(result, max_column_diameter_m: float, harbor_draft_limit_m
     freeboard_px = max(0.0, col_height_px - draft_px)
     top_y = keel_y - col_height_px
     water_y = keel_y - draft_px
-    col_w = max(30.0, min(72.0, result.column_diameter_m * 4.0))
-    spacing_px = min(330.0, max(190.0, result.column_spacing_m * 3.0))
-    x1, x2 = width / 2 - spacing_px / 2, width / 2 + spacing_px / 2
+    harbor_y = keel_y - harbor_draft * col_scale
+    outer_w = max(24.0, result.column_diameter_m * col_scale)
+    central_w = max(20.0, result.central_column_diameter_m * col_scale)
+    pontoon_h = max(18.0, result.pontoon_height_m * col_scale)
+    x1, x2 = cx - projected_radius * col_scale, cx + projected_radius * col_scale
     ratio = min(1.0, result.column_diameter_m / max(max_column_diameter_m, 1e-6))
     fill = "#dc2626" if ratio > 1.0 else "#ef4444"
-    pontoon_h = 22
     return f"""
     <svg viewBox="0 0 {width} {height}" role="img" aria-label="Side view platform layout">
       <style>
         .bg {{ fill:#ffffff; }}
-        .waterline {{ stroke:#111827; stroke-width:1; }}
+        .waterline {{ stroke:#0f766e; stroke-width:1.5; }}
+        .harborline {{ stroke:#0284c7; stroke-width:1; stroke-dasharray:5 4; }}
         .column {{ fill:{fill}; stroke:#b91c1c; stroke-width:2; filter:url(#shadow); }}
-        .dry {{ fill:#ffffff; stroke:#84cc16; stroke-width:4; }}
+        .dry {{ fill:#ecfccb; stroke:#65a30d; stroke-width:2; }}
         .pontoon {{ fill:{fill}; stroke:#b91c1c; stroke-width:2; filter:url(#shadow); }}
+        .strut {{ stroke:#475569; stroke-width:3; }}
+        .tower {{ stroke:#334155; stroke-width:5; }}
         .dim {{ stroke:#111827; stroke-width:1; marker-start:url(#arrow); marker-end:url(#arrow); }}
-        .thin {{ stroke:#111827; stroke-width:1; fill:none; }}
+        .extension {{ stroke:#64748b; stroke-width:1; }}
         .label {{ font: 13px system-ui, sans-serif; fill:#111827; }}
         .small {{ font: 12px system-ui, sans-serif; fill:#334155; }}
       </style>
       <defs>
-        <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
-          <path d="M0,0 L8,4 L0,8 z" fill="#111827" />
+        <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 z" fill="#111827" />
         </marker>
         <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
           <feDropShadow dx="4" dy="5" stdDeviation="3" flood-color="#000000" flood-opacity="0.20" />
@@ -177,21 +204,28 @@ def platform_side_svg(result, max_column_diameter_m: float, harbor_draft_limit_m
       </defs>
       <rect class="bg" x="0" y="0" width="{width}" height="{height}" />
       <line class="waterline" x1="48" y1="{water_y}" x2="{width-46}" y2="{water_y}" />
-      <rect class="pontoon" x="{x1-col_w/2:.1f}" y="{keel_y-pontoon_h:.1f}" width="{x2-x1+col_w:.1f}" height="{pontoon_h}" rx="3" />
-      <rect class="column" x="{x1-col_w/2:.1f}" y="{water_y:.1f}" width="{col_w:.1f}" height="{draft_px:.1f}" rx="4" />
-      <rect class="column" x="{x2-col_w/2:.1f}" y="{water_y:.1f}" width="{col_w:.1f}" height="{draft_px:.1f}" rx="4" />
-      <rect class="dry" x="{x1-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{freeboard_px:.1f}" rx="4" />
-      <rect class="dry" x="{x2-col_w/2:.1f}" y="{top_y:.1f}" width="{col_w:.1f}" height="{freeboard_px:.1f}" rx="4" />
-      <line class="dim" x1="{x1-col_w/2-42:.1f}" y1="{top_y:.1f}" x2="{x1-col_w/2-42:.1f}" y2="{keel_y:.1f}" />
-      <text class="label" x="{x1-col_w/2-112:.1f}" y="{(top_y+keel_y)/2+4:.1f}">{result.column_height_m:.1f} m column</text>
-      <line class="dim" x1="{x1:.1f}" y1="{keel_y+28:.1f}" x2="{x2:.1f}" y2="{keel_y+28:.1f}" />
-      <text class="label" x="{width/2-28:.1f}" y="{keel_y+45:.1f}">{result.column_spacing_m:.1f} m</text>
-      <line class="dim" x1="{x2+42:.1f}" y1="{water_y:.1f}" x2="{x2+42:.1f}" y2="{keel_y:.1f}" />
-      <text class="label" x="{x2+52:.1f}" y="{(water_y+keel_y)/2-4:.1f}">{operation_draft:.1f} m operation</text>
-      <text class="small" x="{x2+52:.1f}" y="{(water_y+keel_y)/2+14:.1f}">harbor {harbor_draft:.1f} m <= {harbor_draft_limit_m:.1f} m</text>
-      <line class="dim" x1="{x1-col_w/2:.1f}" y1="{keel_y+10:.1f}" x2="{x1+col_w/2:.1f}" y2="{keel_y+10:.1f}" />
-      <text class="label" x="{x1-col_w/2-2:.1f}" y="{keel_y+24:.1f}">{result.column_diameter_m:.1f} m</text>
-      <text class="small" x="20" y="334">Side view: foundation geometry only</text>
+      <line class="harborline" x1="48" y1="{harbor_y:.1f}" x2="{width-46}" y2="{harbor_y:.1f}" />
+      <rect class="pontoon" x="{x1-outer_w/2:.1f}" y="{keel_y-pontoon_h:.1f}" width="{cx-x1+outer_w/2:.1f}" height="{pontoon_h:.1f}" rx="3" />
+      <rect class="pontoon" x="{cx:.1f}" y="{keel_y-pontoon_h:.1f}" width="{x2-cx+outer_w/2:.1f}" height="{pontoon_h:.1f}" rx="3" />
+      <line class="strut" x1="{cx:.1f}" y1="{top_y+5:.1f}" x2="{x1:.1f}" y2="{top_y+5:.1f}" />
+      <line class="strut" x1="{cx:.1f}" y1="{top_y+5:.1f}" x2="{x2:.1f}" y2="{top_y+5:.1f}" />
+      <rect class="column" x="{x1-outer_w/2:.1f}" y="{water_y:.1f}" width="{outer_w:.1f}" height="{draft_px:.1f}" rx="3" />
+      <rect class="column" x="{x2-outer_w/2:.1f}" y="{water_y:.1f}" width="{outer_w:.1f}" height="{draft_px:.1f}" rx="3" />
+      <rect class="column" x="{cx-central_w/2:.1f}" y="{water_y:.1f}" width="{central_w:.1f}" height="{draft_px:.1f}" rx="3" />
+      <rect class="dry" x="{x1-outer_w/2:.1f}" y="{top_y:.1f}" width="{outer_w:.1f}" height="{freeboard_px:.1f}" rx="3" />
+      <rect class="dry" x="{x2-outer_w/2:.1f}" y="{top_y:.1f}" width="{outer_w:.1f}" height="{freeboard_px:.1f}" rx="3" />
+      <rect class="dry" x="{cx-central_w/2:.1f}" y="{top_y:.1f}" width="{central_w:.1f}" height="{freeboard_px:.1f}" rx="3" />
+      <line class="tower" x1="{cx:.1f}" y1="{top_y:.1f}" x2="{cx:.1f}" y2="{top_y-38:.1f}" />
+      <text class="small" x="{cx+10:.1f}" y="{top_y-24:.1f}">WTG tower</text>
+      <line class="dim" x1="{x1-outer_w/2-22:.1f}" y1="{top_y:.1f}" x2="{x1-outer_w/2-22:.1f}" y2="{keel_y:.1f}" />
+      <text class="label" x="18" y="{top_y-12:.1f}">Column height {result.column_height_m:.1f} m</text>
+      <line class="dim" x1="{cx:.1f}" y1="{keel_y+22:.1f}" x2="{x2:.1f}" y2="{keel_y+22:.1f}" />
+      <text class="label" x="{cx+(x2-cx)/2-38:.1f}" y="{keel_y+40:.1f}">{result.column_spacing_m:.1f} m radial</text>
+      <line class="dim" x1="{width-24:.1f}" y1="{water_y:.1f}" x2="{width-24:.1f}" y2="{keel_y:.1f}" />
+      <text class="label" x="{width-158:.1f}" y="{water_y-10:.1f}">Operation draft {operation_draft:.1f} m</text>
+      <text class="small" x="{width-190:.1f}" y="{top_y+18:.1f}">Dashed: harbor draft {harbor_draft:.1f} m</text>
+      <text class="small" x="{width-190:.1f}" y="{top_y+34:.1f}">Harbor limit {harbor_draft_limit_m:.1f} m</text>
+      <text class="small" x="20" y="344">Side view: central tower column, radial columns, bottom pontoons and upper struts</text>
     </svg>
     """
 
@@ -229,8 +263,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Floating Wind Foundation CAPEX Optimizer v0.5")
-st.caption("A concept-screening optimizer for non-experts: choose turbine size, then optimize foundation CAPEX.")
+st.title("Floating Wind Foundation CAPEX Optimizer v0.6")
+st.caption(
+    "A concept-screening optimizer anchored to the UMaine VolturnUS-S 15 MW reference platform."
+)
 
 with st.sidebar:
     st.header("Constraint")
@@ -312,7 +348,9 @@ l3.metric("Pitch / heel", compact_number(result.static_heel_deg, "deg"), f"limit
 l4.metric("Offset", compact_number(result.offset_m, "m"), f"limit {result.allowable_offset_m:.1f} m")
 
 st.subheader("Platform Layout")
-st.caption("Mooring lines are not visualized.")
+st.caption(
+    "VolturnUS-S arrangement with the WTG on the central column. Mooring lines are not visualized."
+)
 d1, d2 = st.columns(2)
 with d1:
     st.markdown(platform_top_svg(result), unsafe_allow_html=True)
@@ -335,12 +373,14 @@ st.dataframe(costs, hide_index=True, width="stretch")
 st.subheader("Optimized Geometry")
 comparison = pd.DataFrame(
     [
-        ["Column spacing", result.column_spacing_m, "m"],
-        ["Column diameter", result.column_diameter_m, "m"],
+        ["Radial column spacing", result.column_spacing_m, "m"],
+        ["Outer column diameter", result.column_diameter_m, "m"],
+        ["Central column diameter", result.central_column_diameter_m, "m"],
         ["Operation draft", operation_draft, "m"],
         ["Deballasted harbor draft", harbor_draft, "m"],
         ["Pontoon width", result.pontoon_width_m, "m"],
         ["Pontoon height", result.pontoon_height_m, "m"],
+        ["Fluid ballast fill", 100.0 * result.fluid_ballast_fill_fraction, "% pontoon volume"],
         ["Foundation CAPEX", result.total_capex_musd, "USD million"],
     ],
     columns=["Design variable", "Optimized value", "Unit"],
@@ -361,6 +401,27 @@ with st.expander("WTG capacity relation used for sizing loads"):
     )
     st.dataframe(turbine_table, hide_index=True, width="stretch")
 
+with st.expander("VolturnUS-S reference values"):
+    reference_table = pd.DataFrame(
+        [
+            ["Outer radial columns", 3, "-"],
+            ["Outer column diameter", 12.5, "m"],
+            ["Central column diameter", 10.0, "m"],
+            ["Radial column spacing", 51.75, "m"],
+            ["Pontoon width x height", "12.5 x 7.0", "m"],
+            ["Operation draft", 20.0, "m"],
+            ["Freeboard", 15.0, "m"],
+            ["Hull displacement", 20206, "m3"],
+            ["Hull steel mass", 3914, "t"],
+            ["Fixed ballast", 2540, "t"],
+            ["Fluid ballast", 11300, "t"],
+            ["Tower interface", 100, "t"],
+        ],
+        columns=["Reference parameter", "Value", "Unit"],
+    )
+    st.dataframe(reference_table, hide_index=True, width="stretch")
+    st.caption("Source: NREL/TP-5000-76773, Definition of the UMaine VolturnUS-S Reference Platform.")
+
 with st.expander("Mooring chain property table used for screening"):
     chain_table = pd.DataFrame(CHAIN_LIBRARY)
     chain_table = chain_table.rename(
@@ -375,15 +436,22 @@ with st.expander("Mooring chain property table used for screening"):
 with st.expander("Detailed engineering values"):
     details = pd.DataFrame(
         [
-            ["Column diameter", result.column_diameter_m, "m"],
-            ["Column spacing", result.column_spacing_m, "m"],
+            ["Outer column diameter", result.column_diameter_m, "m"],
+            ["Central column diameter", result.central_column_diameter_m, "m"],
+            ["Radial column spacing", result.column_spacing_m, "m"],
             ["Column height", result.column_height_m, "m"],
             ["Pontoon width", result.pontoon_width_m, "m"],
             ["Pontoon height", result.pontoon_height_m, "m"],
             ["Operation draft", operation_draft, "m"],
             ["Deballasted harbor draft", harbor_draft, "m"],
             ["Structural mass", result.structural_mass_t, "t"],
-            ["Ballast", result.ballast_t, "t"],
+            ["Tower interface mass", result.tower_interface_mass_t, "t"],
+            ["Fixed ballast", result.fixed_ballast_t, "t"],
+            ["Fluid ballast", result.fluid_ballast_t, "t"],
+            ["Fluid ballast volume", result.fluid_ballast_volume_m3, "m3"],
+            ["Pontoon ballast volume", result.pontoon_volume_m3, "m3"],
+            ["Fluid ballast fill", 100.0 * result.fluid_ballast_fill_fraction, "%"],
+            ["Operational mooring vertical load equivalent", result.mooring_vertical_load_t, "t"],
             ["GM", result.gm_m, "m"],
             ["Restoring / heeling", result.restoring_ratio, "-"],
             ["Mooring demand (rotor thrust)", result.mooring_demand_mn, "MN"],
