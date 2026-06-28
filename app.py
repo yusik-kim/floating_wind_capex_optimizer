@@ -1,16 +1,20 @@
+import importlib
 import math
 
 import pandas as pd
 import streamlit as st
 
-from engine import (
-    CHAIN_LIBRARY,
-    TURBINE_LIBRARY,
-    design_inputs_from_turbine,
-    optimize_capex,
-    result_as_dict,
-    turbine_from_capacity,
-)
+import engine as engine_module
+
+
+# Streamlit Cloud can rerun app.py while retaining an older imported engine module.
+engine_module = importlib.reload(engine_module)
+CHAIN_LIBRARY = engine_module.CHAIN_LIBRARY
+TURBINE_LIBRARY = engine_module.TURBINE_LIBRARY
+design_inputs_from_turbine = engine_module.design_inputs_from_turbine
+optimize_capex = engine_module.optimize_capex
+result_as_dict = engine_module.result_as_dict
+turbine_from_capacity = engine_module.turbine_from_capacity
 
 
 st.set_page_config(page_title="Floating Wind Foundation CAPEX Optimizer v0.6", layout="wide")
@@ -38,6 +42,14 @@ def harbor_draft_m(result) -> float:
     return getattr(result, "deballasted_draft_m", operation_draft_m(result))
 
 
+def central_column_diameter_m(result) -> float:
+    return getattr(result, "central_column_diameter_m", 0.8 * result.column_diameter_m)
+
+
+def fluid_ballast_fill_fraction(result) -> float:
+    return getattr(result, "fluid_ballast_fill_fraction", 0.0)
+
+
 def failed_constraints(result) -> list[str]:
     checks = [
         ("column diameter", result.column_diameter_pass),
@@ -62,7 +74,7 @@ def constraint_margins_for_ui(result, gm_min_m, harbor_draft_limit_m, max_column
         "ballast positive": (ballast_positive, "allow a lighter geometry or revise ballast assumptions"),
         "ballast fraction": (result.ballast_t / max(0.75 * result.buoyancy_t, 1e-6), "allow a higher ballast fraction or revise geometry"),
         "fluid ballast tank capacity": (
-            result.fluid_ballast_fill_fraction,
+            fluid_ballast_fill_fraction(result),
             "allow larger pontoons or additional ballast tanks",
         ),
         "offset": (result.offset_m / max(result.allowable_offset_m, 1e-6), f"increase offset limit above {result.offset_m:.1f} m"),
@@ -93,7 +105,8 @@ def platform_top_svg(result) -> str:
     scale = min(3.0, 145.0 / max(result.column_spacing_m, 1.0))
     radius = result.column_spacing_m * scale
     outer_r = max(8.0, result.column_diameter_m * scale / 2.0)
-    central_r = max(7.0, result.central_column_diameter_m * scale / 2.0)
+    central_diameter = central_column_diameter_m(result)
+    central_r = max(7.0, central_diameter * scale / 2.0)
     pontoon_width = max(9.0, result.pontoon_width_m * scale)
     points = [
         (cx + radius, cy),
@@ -147,7 +160,7 @@ def platform_top_svg(result) -> str:
       <text class="label" x="{cx+radius/2-54:.1f}" y="{cy+49:.1f}">{result.column_spacing_m:.1f} m radial spacing</text>
       <line class="dim" x1="{points[0][0]-outer_r:.1f}" y1="{cy-38:.1f}" x2="{points[0][0]+outer_r:.1f}" y2="{cy-38:.1f}" />
       <text class="label" x="{points[0][0]-58:.1f}" y="{cy-49:.1f}">Outer dia {result.column_diameter_m:.1f} m</text>
-      <text class="label" x="{cx-112:.1f}" y="{cy-27:.1f}">Central dia {result.central_column_diameter_m:.1f} m</text>
+      <text class="label" x="{cx-112:.1f}" y="{cy-27:.1f}">Central dia {central_diameter:.1f} m</text>
       <text class="small" x="{cx-42:.1f}" y="{cy-52:.1f}">WTG support</text>
       <text class="small" x="20" y="334">Top view: VolturnUS-S four-column radial layout</text>
     </svg>
@@ -173,7 +186,7 @@ def platform_side_svg(result, max_column_diameter_m: float, harbor_draft_limit_m
     water_y = keel_y - draft_px
     harbor_y = keel_y - harbor_draft * col_scale
     outer_w = max(24.0, result.column_diameter_m * col_scale)
-    central_w = max(20.0, result.central_column_diameter_m * col_scale)
+    central_w = max(20.0, central_column_diameter_m(result) * col_scale)
     pontoon_h = max(18.0, result.pontoon_height_m * col_scale)
     x1, x2 = cx - projected_radius * col_scale, cx + projected_radius * col_scale
     ratio = min(1.0, result.column_diameter_m / max(max_column_diameter_m, 1e-6))
@@ -375,12 +388,12 @@ comparison = pd.DataFrame(
     [
         ["Radial column spacing", result.column_spacing_m, "m"],
         ["Outer column diameter", result.column_diameter_m, "m"],
-        ["Central column diameter", result.central_column_diameter_m, "m"],
+        ["Central column diameter", central_column_diameter_m(result), "m"],
         ["Operation draft", operation_draft, "m"],
         ["Deballasted harbor draft", harbor_draft, "m"],
         ["Pontoon width", result.pontoon_width_m, "m"],
         ["Pontoon height", result.pontoon_height_m, "m"],
-        ["Fluid ballast fill", 100.0 * result.fluid_ballast_fill_fraction, "% pontoon volume"],
+        ["Fluid ballast fill", 100.0 * fluid_ballast_fill_fraction(result), "% pontoon volume"],
         ["Foundation CAPEX", result.total_capex_musd, "USD million"],
     ],
     columns=["Design variable", "Optimized value", "Unit"],
@@ -408,7 +421,8 @@ with st.expander("VolturnUS-S reference values"):
             ["Outer column diameter", 12.5, "m"],
             ["Central column diameter", 10.0, "m"],
             ["Radial column spacing", 51.75, "m"],
-            ["Pontoon width x height", "12.5 x 7.0", "m"],
+            ["Pontoon width", 12.5, "m"],
+            ["Pontoon height", 7.0, "m"],
             ["Operation draft", 20.0, "m"],
             ["Freeboard", 15.0, "m"],
             ["Hull displacement", 20206, "m3"],
@@ -437,7 +451,7 @@ with st.expander("Detailed engineering values"):
     details = pd.DataFrame(
         [
             ["Outer column diameter", result.column_diameter_m, "m"],
-            ["Central column diameter", result.central_column_diameter_m, "m"],
+            ["Central column diameter", central_column_diameter_m(result), "m"],
             ["Radial column spacing", result.column_spacing_m, "m"],
             ["Column height", result.column_height_m, "m"],
             ["Pontoon width", result.pontoon_width_m, "m"],
@@ -445,13 +459,13 @@ with st.expander("Detailed engineering values"):
             ["Operation draft", operation_draft, "m"],
             ["Deballasted harbor draft", harbor_draft, "m"],
             ["Structural mass", result.structural_mass_t, "t"],
-            ["Tower interface mass", result.tower_interface_mass_t, "t"],
-            ["Fixed ballast", result.fixed_ballast_t, "t"],
-            ["Fluid ballast", result.fluid_ballast_t, "t"],
-            ["Fluid ballast volume", result.fluid_ballast_volume_m3, "m3"],
-            ["Pontoon ballast volume", result.pontoon_volume_m3, "m3"],
-            ["Fluid ballast fill", 100.0 * result.fluid_ballast_fill_fraction, "%"],
-            ["Operational mooring vertical load equivalent", result.mooring_vertical_load_t, "t"],
+            ["Tower interface mass", getattr(result, "tower_interface_mass_t", 0.0), "t"],
+            ["Fixed ballast", getattr(result, "fixed_ballast_t", 0.0), "t"],
+            ["Fluid ballast", getattr(result, "fluid_ballast_t", result.ballast_t), "t"],
+            ["Fluid ballast volume", getattr(result, "fluid_ballast_volume_m3", 0.0), "m3"],
+            ["Pontoon ballast volume", getattr(result, "pontoon_volume_m3", 0.0), "m3"],
+            ["Fluid ballast fill", 100.0 * fluid_ballast_fill_fraction(result), "%"],
+            ["Operational mooring vertical load equivalent", getattr(result, "mooring_vertical_load_t", 0.0), "t"],
             ["GM", result.gm_m, "m"],
             ["Restoring / heeling", result.restoring_ratio, "-"],
             ["Mooring demand (rotor thrust)", result.mooring_demand_mn, "MN"],
