@@ -845,6 +845,16 @@ bop_capex =
     turbine_mw * USD_PER_MW_ELECTRICAL / 1,000,000
 ```
 
+This is a local, turbine-level electrical / balance-of-plant allowance rather than
+a full wind-farm export-grid estimate. For concept screening, local BoP is
+assumed to be about 10-15% of foundation CAPEX, which corresponds to roughly
+0.2-0.3 MUSD/MW for the foundation cost range represented by this model. The
+current default uses:
+
+```text
+USD_PER_MW_ELECTRICAL = 260,000 USD/MW
+```
+
 Installation cost is:
 
 ```text
@@ -854,6 +864,25 @@ installation_capex =
     * (water_depth / 200)^0.18
     / 1,000,000
 ```
+
+The installation allowance is a screening power-law surrogate. Turbine size and
+water depth both have strong influence on floating foundation installation cost
+through port handling, tow-out, hook-up, vessel spread, marine operations, and
+weather exposure. The reference installation allowance is set to about 50% of
+the representative 15 MW foundation cost at 200 m water depth:
+
+```text
+USD_INSTALL_BASE = 8,000,000 USD
+```
+
+The turbine-size exponent `0.55` gives sub-linear cost growth with turbine
+rating, reflecting the fixed and campaign-level portions of installation cost.
+The water-depth exponent `0.18` gives weaker direct depth sensitivity because
+mooring material cost is estimated separately while installation still becomes
+more demanding with deeper hook-up and cable/mooring operations. These
+exponents are engineering screening assumptions and should be recalibrated when
+project-specific installation data, ORBIT-style vessel-day estimates, or
+contractor quotes are available.
 
 Foundation CAPEX is:
 
